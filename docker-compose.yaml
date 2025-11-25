@@ -1,0 +1,59 @@
+name: larek-cli
+
+services:
+  gitlab:
+    image: "gitlab/gitlab-ce:latest"
+    container_name: gitlab_server
+    restart: always
+    hostname: "gitlab.local"
+    environment:
+      GITLAB_ROOT_PASSWORD: "SuperSecurePassword123"
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.local';
+        gitlab_rails['gitlab_email_from'] = 'admin@larek.tech';
+    ports:
+      - "80:80"
+      - "443:443"
+      - "22:22"
+    volumes:
+      - "./gitlab/config:/etc/gitlab"
+      - "./gitlab/logs:/var/log/gitlab"
+      - "./gitlab/data:/var/opt/gitlab"
+    networks:
+      - gitlab-network
+    shm_size: "256m"
+
+  nexus:
+    image: sonatype/nexus3
+    container_name: nexus
+    restart: always
+    ports:
+      - "8081:8081"
+    volumes:
+      - "./nexus-data:/nexus-data"
+    networks:
+      - gitlab-network
+
+  gitlab-runner:
+    image: "gitlab/gitlab-runner:alpine"
+    container_name: gitlab_runner
+    restart: always
+    depends_on:
+      - gitlab
+    volumes:
+      - "./gitlab-runner/config:/etc/gitlab-runner"
+      - "/var/run/docker.sock:/var/run/docker.sock" # Mount for Docker-in-Docker (dind)
+    networks:
+      - gitlab-network
+
+  # TODO: add sonar
+
+networks:
+  gitlab-network:
+    driver: bridge
+#docker compose exec gitlab-runner gitlab-runner register --url http://gitlab_server --token YOUR_RUNNER_AUTHENTICATION_TOKEN --executor docker --description "Docker Runner" --docker-image "alpine:latest" --tag-list "docker,ci,staging" --run-untagged="true" --locked="false"
+
+# curl --request POST --header "PRIVATE-TOKEN: <your_access_token>" \
+#--data "runner_type=instance_type&description=My%20API%20Runner&tag_list=api,shell" \
+# "your-gitlab-instance.com"
+

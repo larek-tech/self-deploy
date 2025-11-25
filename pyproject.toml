@@ -1,0 +1,24 @@
+[project]
+name = "self-deploy"
+version = "0.1.0"
+description = "CLI инструмент для управления инфраструктурой self-deploy"
+authors = [
+    {name = "EgorTarasov",email = "61450170+EgorTarasov@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15.0",
+    "rich>=14.0.0",
+    "pydantic (>=2.12.4,<3.0.0)",
+]
+
+[project.scripts]
+larek = "larek.main:app"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "larek"}]
