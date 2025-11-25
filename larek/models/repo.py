@@ -5,11 +5,18 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-class Dependency(BaseModel):
-    """Зависимость проекта (библиотека)."""
+class Lib(BaseModel):
+    """Внешняя зависимость фреймворк"""
 
     name: str = Field(..., description="Название библиотеки")
     version: Optional[str] = Field(None, description="Версия библиотеки")
+
+
+class Dependency(BaseModel):
+    """Зависимость проекта (библиотека)."""
+
+    packet_manager: str = Field(..., description="менеджер зависимостей проекта")
+    libs: list[Lib]
 
 
 class Linter(BaseModel):
