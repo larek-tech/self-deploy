@@ -1,0 +1,30 @@
+# Build Stage
+FROM golang:{{ service.lang.version or "1.21" }}-alpine AS builder
+
+WORKDIR /app
+
+{% if service.dependencies.packet_manager == "go mod" %}
+# Copy go.mod and optionally go.sum if dependencies exist
+COPY go.mod ./
+{% if service.dependencies.libs|length > 0 %}
+COPY go.sum ./
+RUN go mod download
+{% endif %}
+{% endif %}
+
+COPY . .
+
+# Build the application(s)
+{% for entrypoint in service.entrypoints %}
+RUN go build -o /bin/{{ service.name }}{% if loop.length > 1 %}_{{ loop.index }}{% endif %} {{ entrypoint }}
+{% endfor %}
+
+# Final Stage
+FROM alpine:latest
+
+WORKDIR /app
+{% for entrypoint in service.entrypoints %}
+COPY --from=builder /bin/{{ service.name }}{% if loop.length > 1 %}_{{ loop.index }}{% endif %} /app/{{ service.name }}{% if loop.length > 1 %}_{{ loop.index }}{% endif %}
+{% endfor %}
+
+CMD ["/app/{{ service.name }}"]
