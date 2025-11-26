@@ -63,6 +63,16 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             return "yarn"
         if (root / "pnpm-lock.yaml").exists():
             return "pnpm"
+
+        repo_root = self._find_repo_root(root)
+        if repo_root:
+            if (repo_root / "bun.lockb").exists():
+                return "bun"
+            if (repo_root / "yarn.lock").exists():
+                return "yarn"
+            if (repo_root / "pnpm-lock.yaml").exists():
+                return "pnpm"
+
         return "npm"
 
     def _is_typescript(self, root: Path) -> bool:
