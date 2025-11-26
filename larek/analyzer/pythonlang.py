@@ -116,7 +116,6 @@ class PythonAnalyze(BaseAnalyzer):
         return None
 
     def _is_uv_project(self, root: Path) -> str:
-        """Проверяет, является ли проект uv проектом"""
         if (root / 'uv.lock').exists():
             return 'uv'
         return None
