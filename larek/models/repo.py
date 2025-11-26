@@ -53,8 +53,12 @@ class Service(BaseModel):
     configs: list[Config] = Field(
         default_factory=list, description="Конфигурационные файлы"
     )
-    dockerfile: str = Field(..., description="Путь до Dockerfile")
-    entrypoint: str = Field(..., description="Точка входа приложения")
+    dockerfiles: list[str] = Field(
+        default_factory=list, description="Пути до Dockerfile'ов"
+    )
+    entrypoints: list[str] = Field(
+        default_factory=list, description="Точки входа приложения"
+    )
     tests: str = Field(..., description="Команда для запуска тестов")
     linters: list[Linter] = Field(
         default_factory=list, description="Настроенные линтеры"

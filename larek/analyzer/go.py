@@ -11,16 +11,16 @@ class GoAnalyzer(BaseAnalyzer):
         self.go_version: str = ""
         self.libs: list[models.Lib] = []
         self.configs: list[models.Config] = []
-        self.dockerfile: str = ""
-        self.entrypoint: str = ""
+        self.dockerfiles: list[str] = []
+        self.entrypoints: list[str] = []
         self.linters: list[models.Linter] = []
 
     def analyze(self, root: Path) -> tp.Optional[models.Service]:
         if not root.is_dir():
             return None
 
-        files = self._scan(root)
-        if not self.is_go_service:
+        self._scan(root)
+        if not self.is_go_service or len(self.entrypoints) == 0:
             return None
 
         return models.Service(
@@ -32,26 +32,18 @@ class GoAnalyzer(BaseAnalyzer):
                 libs=self.libs,
             ),
             configs=self.configs,
-            dockerfile=self.dockerfile,
-            entrypoint=self.entrypoint,
+            dockerfiles=self.dockerfiles,
+            entrypoints=self.entrypoints,
             tests="go test -coverpkg=./... -coverprofile=coverage.out ./...",
             linters=self.linters,
         )
 
-    def _scan(self, root: Path) -> list[Path]:
-        files: list[Path] = []
+    def _scan(self, root: Path):
         for f in root.iterdir():
             if f.is_file() and self._file_filter(f):
-                files.append(f)
-                if (
-                    not self.is_go_service or self.go_version == ""
-                ) and self._is_go_service(f):
-                    self.is_go_service = True
+                self._parse_file(f)
             elif f.is_dir():
-                nested_files = self._scan(f)
-                files.extend(nested_files)
-
-        return files
+                self._scan(f)
 
     def _file_filter(self, file: Path) -> bool:
         match file.name:
@@ -59,16 +51,53 @@ class GoAnalyzer(BaseAnalyzer):
                 return False
         return True
 
-    def _is_go_service(self, file: Path) -> bool:
+    def _parse_file(self, file: Path):
         match file.name:
             case "go.mod":
                 self.go_version, self.libs = self._parse_go_mod(file)
                 if self.go_version == "":
                     raise ValueError("inconsistent go.mod")
+                self.is_go_service = True
 
             case "main.go":
-                return True
-        return False
+                self.is_go_service = True
+                self.entrypoints.append(str(file))
+
+            case "Dockerfile":
+                self.dockerfiles.append(str(file))
+
+            case ".golangci.yml" | ".golangci.yaml":
+                self.linters.append(
+                    models.Linter(
+                        name="golangci-lint",
+                        config=str(file),
+                    )
+                )
+
+            case ".sonar-project.properties":
+                self.linters.append(
+                    models.Linter(
+                        name="sonar",
+                        config=str(file),
+                    )
+                )
+
+            case _:
+                if (
+                    "config" in file.name
+                    or "cfg" in file.name
+                    or "settings" in file.name
+                    or ".env" in file.name
+                ) and ".go" not in file.suffix:
+                    self.configs.append(
+                        models.Config(
+                            name=file.name,
+                            path=str(file),
+                        )
+                    )
+
+                elif "Dockerfile" in file.name:
+                    self.dockerfiles.append(str(file))
 
     def _parse_go_mod(self, go_mod_file: Path) -> tuple[str, list[models.Lib]]:
         go_version_pattern = re.compile(r"\d.\d+.\d+")
