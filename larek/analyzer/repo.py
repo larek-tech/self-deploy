@@ -18,6 +18,9 @@ class RepoAnalyzer:
     def analyze(self, root: Path) -> models.RepoSchema:
         """Анализ репозитория и сбор информации о сервисах."""
 
+        if root == Path("."):
+            root = Path(os.getcwd())
+
         deployment = self._find_deployment_info(root, self._find_environment_vars(root))
 
         dirs = [d for d in root.iterdir() if d.is_dir() and self._file_filter(d)]
