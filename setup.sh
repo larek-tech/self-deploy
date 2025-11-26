@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Ensure `gitlab.local` entry exists in /etc/hosts
-if ! grep -q "gitlab.local" /etc/hosts; then
-  echo "127.0.0.1 gitlab.local" >> /etc/hosts
-fi
+# if ! grep -q "gitlab.local" /etc/hosts; then
+#   echo "127.0.0.1 gitlab.local" >> /etc/hosts
+# fi
 
 set -euo pipefail
 
