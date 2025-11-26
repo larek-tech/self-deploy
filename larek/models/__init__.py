@@ -1,14 +1,6 @@
 """Pydantic модели для работы с данными репозитория."""
 
-from larek.models.repo import (
-    Config,
-    Dependencies,
-    Language,
-    Linter,
-    RepoSchema,
-    Service,
-    Lib,
-)
+from larek.models.repo import *
 
 __all__ = [
     "Config",
@@ -18,4 +10,7 @@ __all__ = [
     "RepoSchema",
     "Service",
     "Lib",
+    "Docker",
+    "Deployment",
+    "Environment",
 ]

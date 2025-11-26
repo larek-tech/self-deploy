@@ -1,7 +1,7 @@
 """Pydantic схемы для хранения данных GitHub репозитория."""
 
 import pathlib
-from typing import Literal, Optional
+from typing import Literal, Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,18 @@ class Language(BaseModel):
     version: Optional[str] = Field(None, description="Версия языка")
 
 
+class Docker(BaseModel):
+    """Информация о сборке в Docker."""
+
+    dockerfiles: list[str] = Field(
+        default_factory=list, description="Пути до Dockerfile'ов"
+    )
+    compose: Optional[str] = Field(None, description="Путь до docker-compose файла")
+    environment: list[Environment] = Field(
+        ..., description="Переменные окружения для Docker"
+    )
+
+
 class Service(BaseModel):
     """Сервис в репозитории."""
 
@@ -53,9 +65,7 @@ class Service(BaseModel):
     configs: list[Config] = Field(
         default_factory=list, description="Конфигурационные файлы"
     )
-    dockerfiles: list[str] = Field(
-        default_factory=list, description="Пути до Dockerfile'ов"
-    )
+    docker: Docker = Field(..., description="Информация о Docker сборке")
     entrypoints: list[str] = Field(
         default_factory=list, description="Точки входа приложения"
     )
@@ -65,9 +75,34 @@ class Service(BaseModel):
     )
 
 
+class Environment(BaseModel):
+    """Переменные окружения для деплоя."""
+
+    name: str = Field(..., description="Название переменной окружения")
+    path: str = Field(..., description="Путь до файла с переменными окружения")
+
+
+class Deployment(BaseModel):
+    """Информация о деплое сервиса."""
+
+    type: Literal["dockerfile", "compose", "helm"] = Field(
+        ..., description="Тип деплоя"
+    )
+    path: str = Field(..., description="Путь до файла деплоя")
+    environment: list[Environment] = Field(
+        default_factory=list, description="Переменные окружения для деплоя"
+    )
+
+
 class RepoSchema(BaseModel):
     """Схема данных репозитория."""
 
+    is_monorepo: bool = Field(
+        ..., description="Флаг, указывающий, является ли репозиторий монорепой."
+    )
     services: list[Service] = Field(
         default_factory=list, description="Список сервисов в репозитории"
+    )
+    deployment: Optional[Deployment] = Field(
+        ..., description="Информация о деплое сервиса"
     )

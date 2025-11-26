@@ -1,7 +1,8 @@
 import typer
+import pathlib
+import pydantic_yaml
 from rich.console import Console
 from larek.analyzer import repo, go
-import pathlib
 
 
 app = typer.Typer(help="Дебаг анализа репозитория")
@@ -38,5 +39,5 @@ def debug(
     repo_schema = repo_analyzer.analyze(repo_path)
 
     console.print(
-        f"[green]Результат анализа репозитория: {repo_schema.model_dump_json()}[/green]"
+        f"[green]Результат анализа репозитория: \n{pydantic_yaml.to_yaml_str(repo_schema)}[/green]"
     )
