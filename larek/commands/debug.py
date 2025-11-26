@@ -1,6 +1,6 @@
 import typer
 from rich.console import Console
-from larek.analyzer import go
+from larek.analyzer import repo, go
 import pathlib
 
 
@@ -33,12 +33,10 @@ def debug(
     console.print(f"[blue]Ветка:[/blue] {branch}")
 
     repo_path = pathlib.Path(repo_path_raw)
-    go_analyzer = go.GoAnalyzer()
-    go_service = go_analyzer.analyze(repo_path)
-    if go_service is None:
-        console.print(f"[red]{repo_path_raw} не является сервисом на Go.[/red]")
-        return
+    repo_analyzer = repo.RepoAnalyzer()
+    repo_analyzer.register_analyzer(lambda: go.GoAnalyzer())
+    repo_schema = repo_analyzer.analyze(repo_path)
 
     console.print(
-        f"[green]Результат анализа Go репозитория: {go_service.model_dump_json()}[/green]"
+        f"[green]Результат анализа репозитория: {repo_schema.model_dump_json()}[/green]"
     )
