@@ -1,5 +1,6 @@
 """Pydantic схемы для хранения данных GitHub репозитория."""
 
+import pathlib
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -45,6 +46,7 @@ class Language(BaseModel):
 class Service(BaseModel):
     """Сервис в репозитории."""
 
+    path: pathlib.Path = Field(..., description="Путь до сервиса в репозитории")
     name: str = Field(..., description="Название сервиса")
     lang: Language = Field(..., description="Язык программирования")
     dependencies: list[Dependency] = Field(
