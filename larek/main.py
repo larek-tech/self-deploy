@@ -3,7 +3,7 @@
 import typer
 from rich.console import Console
 
-from larek.commands import init, status, debug, clear, docker
+from larek.commands import init, status, debug, clear, docker, gitlab
 
 app = typer.Typer(
     name="larek",
@@ -19,6 +19,7 @@ app.add_typer(debug.app, name="debug")
 app.command()(status.status)
 app.command()(clear.clear)
 app.command()(docker.docker)
+app.command()(gitlab.gitlab)
 
 
 @app.callback()

@@ -1,0 +1,84 @@
+# GitLab CI Pipeline for {{ service.name }}
+# Language: {{ service.lang.name | capitalize }} (Node.js {{ node_version }})
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  NODE_VERSION: "{{ node_version }}"
+
+.node-cache: &node-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-node"
+    paths:
+{% if package_manager == 'yarn' %}
+      - .yarn/cache/
+{% elif package_manager == 'pnpm' %}
+      - .pnpm-store/
+{% else %}
+      - node_modules/
+{% endif %}
+
+.node-setup: &node-setup
+  before_script:
+{% if package_manager == 'pnpm' %}
+    - corepack enable
+    - corepack prepare pnpm@latest --activate
+{% endif %}
+    - {{ install_command }}
+
+lint:
+  stage: lint
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ lint_command }}
+{% if is_typescript %}
+    - {{ package_manager }}{% if package_manager == 'npm' %} run{% endif %} tsc --noEmit
+{% endif %}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ test_command }}
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ build_command }}
+  artifacts:
+    paths:
+{% if is_spa %}
+      - dist/
+      - build/
+{% else %}
+      - lib/
+      - dist/
+{% endif %}
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG

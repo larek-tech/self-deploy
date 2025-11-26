@@ -8,7 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import print as rprint
 
-from pydantic_yaml import parse_yaml_raw_as, to_yaml_str
+from pydantic_yaml import parse_yaml_raw_as
 
 
 def docker(
@@ -32,9 +32,6 @@ def docker(
     for srv in config.services:
         dockerfile = composer.get_dockerfile(srv)
 
-        # rprint(
-        #     Panel(dockerfile, title=f"Dockerfile for {srv.name}", border_style="green")
-        # )
         with open(f"{srv.name}.Dockerfile", "w", encoding="utf-8") as f:
             f.write(dockerfile)
 

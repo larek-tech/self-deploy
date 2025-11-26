@@ -1,20 +1,52 @@
 #!/bin/bash
 
-
+# Ensure `gitlab.local` entry exists in /etc/hosts
 if ! grep -q "gitlab.local" /etc/hosts; then
   echo "127.0.0.1 gitlab.local" >> /etc/hosts
 fi
 
+set -euo pipefail
+
+echo "Ensuring Docker named volumes exist (gitlab, nexus, runner)..."
+# Create named volumes used by docker-compose to avoid macOS host permission problems.
+docker volume create gitlab_config >/dev/null || true
+docker volume create gitlab_logs >/dev/null || true
+docker volume create gitlab_data >/dev/null || true
+docker volume create nexus_data >/dev/null || true
+docker volume create gitlab_runner_config >/dev/null || true
+
 echo "Starting self-deploy instance"
 docker compose up -d
 
-echo "Waiting for GitLab to be healthy (this may take several minutes)..."
-until [ "$(docker inspect -f '{{.State.Health.Status}}' gitlab_server)" == "healthy" ]; do
-    sleep 10
-    echo -n "."
+echo "Waiting for GitLab to become ready (this may take several minutes)..."
+
+# Wait for container to exist
+until docker inspect gitlab_server >/dev/null 2>&1; do
+  sleep 2
+  echo -n "."
 done
 echo ""
-echo "GitLab is healthy."
+
+# Loop until we see a healthy status or a responsive HTTP endpoint
+while true; do
+  STATUS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' gitlab_server 2>/dev/null || echo "")
+
+  if [ "${STATUS}" = "healthy" ]; then
+    echo "GitLab container reports healthy." && break
+  fi
+
+  if [ "${STATUS}" = "running" ]; then
+    # Check mapped HTTP port on host (default 80)
+    if command -v curl >/dev/null 2>&1 && curl -fsS --connect-timeout 2 http://localhost/ >/dev/null 2>&1; then
+      echo "GitLab HTTP is responsive on localhost:80." && break
+    fi
+  fi
+
+  sleep 10
+  echo -n "."
+done
+echo ""
+echo "GitLab appears ready."
 
 # Create configuration script
 cat <<EOF > configure_gitlab.rb

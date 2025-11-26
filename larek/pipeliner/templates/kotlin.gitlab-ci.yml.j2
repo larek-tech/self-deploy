@@ -1,0 +1,74 @@
+# GitLab CI Pipeline for {{ service.name }}
+# Language: Kotlin (JVM {{ java_version }})
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  JAVA_VERSION: "{{ java_version }}"
+{% if 'gradle' in package_manager.lower() %}
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+{% else %}
+  MAVEN_OPTS: "-Dmaven.repo.local=${CI_PROJECT_DIR}/.m2/repository"
+{% endif %}
+
+.kotlin-cache: &kotlin-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-kotlin"
+    paths:
+{% if 'gradle' in package_manager.lower() %}
+      - .gradle/
+      - build/
+{% else %}
+      - .m2/repository/
+{% endif %}
+
+lint:
+  stage: lint
+  image: eclipse-temurin:{{ java_version }}-jdk
+  <<: *kotlin-cache
+  script:
+    - {{ lint_command }}
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: eclipse-temurin:{{ java_version }}-jdk
+  <<: *kotlin-cache
+  script:
+    - {{ test_command }}
+  artifacts:
+    reports:
+      junit:
+{% if 'gradle' in package_manager.lower() %}
+        - build/test-results/test/*.xml
+{% else %}
+        - target/surefire-reports/*.xml
+{% endif %}
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: eclipse-temurin:{{ java_version }}-jdk
+  <<: *kotlin-cache
+  script:
+    - {{ build_command }}
+  artifacts:
+    paths:
+{% if 'gradle' in package_manager.lower() %}
+      - build/libs/*.jar
+{% else %}
+      - target/*.jar
+{% endif %}
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG

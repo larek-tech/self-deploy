@@ -1,0 +1,69 @@
+# GitLab CI Pipeline for {{ service.name }}
+# Language: Go {{ go_version }}
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  GO_VERSION: "{{ go_version }}"
+
+.go-cache: &go-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-go"
+    paths:
+      - .cache/go/pkg/mod/
+
+lint:
+  stage: lint
+  image: golangci/golangci-lint:latest
+  <<: *go-cache
+  variables:
+    GOPATH: "${CI_PROJECT_DIR}/.cache/go"
+  script:
+    - {{ lint_command }}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: golang:{{ go_version }}-alpine
+  <<: *go-cache
+  variables:
+    GOPATH: "${CI_PROJECT_DIR}/.cache/go"
+    CGO_ENABLED: "0"
+  before_script:
+    - go mod download
+  script:
+    - {{ test_command }}
+  coverage: '/coverage: \d+.\d+% of statements/'
+  artifacts:
+    reports:
+      junit: report.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: golang:{{ go_version }}-alpine
+  <<: *go-cache
+  variables:
+    GOPATH: "${CI_PROJECT_DIR}/.cache/go"
+    CGO_ENABLED: "0"
+  before_script:
+    - go mod download
+  script:
+{% for cmd in build_commands %}
+    - {{ cmd }}
+{% endfor %}
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG

@@ -80,6 +80,9 @@ class Composer:
         }
 
     def get_dockerfile(self, service: Service) -> str:
+        # if service.dockerfiles != "":
+        # return
+
         builder = self.builders.get(service.lang.name)
         if not builder:
             raise ValueError(f"No builder found for language: {service.lang.name}")

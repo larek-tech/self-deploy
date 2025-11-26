@@ -1,0 +1,94 @@
+# GitLab CI Pipeline for {{ service.name }}
+# Language: Python {{ python_version }}
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  PYTHON_VERSION: "{{ python_version }}"
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+
+.python-cache: &python-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-python"
+    paths:
+      - .cache/pip/
+      - .venv/
+
+{% if package_manager == 'poetry' %}
+.poetry-setup: &poetry-setup
+  before_script:
+    - pip install poetry
+    - poetry config virtualenvs.in-project true
+    - {{ install_command }}
+{% endif %}
+
+lint:
+  stage: lint
+  image: python:{{ python_version }}-slim
+  <<: *python-cache
+{% if package_manager == 'poetry' %}
+  <<: *poetry-setup
+{% else %}
+  before_script:
+    - pip install ruff mypy
+    - {{ install_command }}
+{% endif %}
+  script:
+    - {{ lint_command }}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: python:{{ python_version }}-slim
+  <<: *python-cache
+{% if package_manager == 'poetry' %}
+  <<: *poetry-setup
+{% else %}
+  before_script:
+    - pip install pytest pytest-cov
+    - {{ install_command }}
+{% endif %}
+  script:
+    - {{ test_command }}
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: python:{{ python_version }}-slim
+  <<: *python-cache
+{% if package_manager == 'poetry' %}
+  <<: *poetry-setup
+  script:
+    - poetry build
+  artifacts:
+    paths:
+      - dist/
+{% else %}
+  before_script:
+    - pip install build
+    - {{ install_command }}
+  script:
+    - python -m build
+  artifacts:
+    paths:
+      - dist/
+{% endif %}
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
