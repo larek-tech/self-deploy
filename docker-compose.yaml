@@ -24,7 +24,7 @@ services:
     shm_size: "256m"
 
   nexus:
-    image: sonatype/nexus3
+    image: sonatype/nexus3:3.86.2
     container_name: nexus
     restart: always
     ports:

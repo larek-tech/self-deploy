@@ -2,7 +2,7 @@
 
 from larek.models.repo import (
     Config,
-    Dependency,
+    Dependencies,
     Language,
     Linter,
     RepoSchema,
@@ -11,7 +11,7 @@ from larek.models.repo import (
 
 __all__ = [
     "Config",
-    "Dependency",
+    "Dependencies",
     "Language",
     "Linter",
     "RepoSchema",
