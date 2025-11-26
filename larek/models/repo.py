@@ -13,11 +13,11 @@ class Lib(BaseModel):
     version: Optional[str] = Field(None, description="Версия библиотеки")
 
 
-class Dependencies(BaseModel):
-    """Зависимости проекта (библиотека)."""
+class Dependency(BaseModel):
+    """Зависимость проекта (библиотека)."""
 
-    packet_manager: str = Field(..., description="Менеджер зависимостей проекта")
-    libs: list[Lib] = Field(default_factory=list, description="Используемые библиотеки")
+    packet_manager: str = Field(..., description="менеджер зависимостей проекта")
+    libs: list[Lib]
 
 
 class Linter(BaseModel):
@@ -49,7 +49,15 @@ class Service(BaseModel):
     path: pathlib.Path = Field(..., description="Путь до сервиса в репозитории")
     name: str = Field(..., description="Название сервиса")
     lang: Language = Field(..., description="Язык программирования")
-    dependencies: Dependencies = Field(..., description="Зависимости проекта")
+    dependencies: list[Dependency] = Field(
+        default_factory=list, description="Зависимости проекта"
+    )
+    packet_manager: str = Field(
+        ..., description="Пакетный менеджер (poetry, npm, gradle, go mod)"
+    )
+    libs: list[Dependency] = Field(
+        default_factory=list, description="Используемые библиотеки"
+    )
     configs: list[Config] = Field(
         default_factory=list, description="Конфигурационные файлы"
     )

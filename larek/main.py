@@ -3,7 +3,7 @@
 import typer
 from rich.console import Console
 
-from larek.commands import init, status, clear, docker
+from larek.commands import init, status
 
 app = typer.Typer(
     name="larek",
@@ -16,8 +16,6 @@ console = Console()
 # Регистрация команд
 app.add_typer(init.app, name="init")
 app.command()(status.status)
-app.command()(clear.clear)
-app.command()(docker.docker)
 
 
 @app.callback()
