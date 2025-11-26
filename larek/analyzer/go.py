@@ -8,6 +8,7 @@ import re
 class GoAnalyzer(BaseAnalyzer):
     def __init__(self) -> None:
         self.is_go_service: bool = False
+
         self.go_version: str = ""
         self.libs: list[models.Lib] = []
         self.configs: list[models.Config] = []
@@ -19,9 +20,16 @@ class GoAnalyzer(BaseAnalyzer):
         if not root.is_dir():
             return None
 
-        self._scan(root)
-        if not self.is_go_service or len(self.entrypoints) == 0:
+        go_mod_file = root / "go.mod"
+        if not go_mod_file.exists():
             return None
+
+        self.go_version, self.libs = self._parse_go_mod(go_mod_file)
+        if self.go_version == "":
+            raise ValueError("inconsistent go.mod")
+        self.is_go_service = True
+
+        self._scan(root)
 
         return models.Service(
             path=root,
@@ -53,14 +61,7 @@ class GoAnalyzer(BaseAnalyzer):
 
     def _parse_file(self, file: Path):
         match file.name:
-            case "go.mod":
-                self.go_version, self.libs = self._parse_go_mod(file)
-                if self.go_version == "":
-                    raise ValueError("inconsistent go.mod")
-                self.is_go_service = True
-
             case "main.go":
-                self.is_go_service = True
                 self.entrypoints.append(str(file))
 
             case "Dockerfile":
@@ -100,7 +101,7 @@ class GoAnalyzer(BaseAnalyzer):
                     self.dockerfiles.append(str(file))
 
     def _parse_go_mod(self, go_mod_file: Path) -> tuple[str, list[models.Lib]]:
-        go_version_pattern = re.compile(r"\d.\d+.\d+")
+        go_version_pattern = re.compile(r"\d.\d*")
         version = ""
         libs: list[models.Lib] = []
         with go_mod_file.open() as f:
