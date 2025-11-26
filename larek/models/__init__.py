@@ -2,18 +2,20 @@
 
 from larek.models.repo import (
     Config,
-    Dependency,
+    Dependencies,
     Language,
     Linter,
     RepoSchema,
     Service,
+    Lib,
 )
 
 __all__ = [
     "Config",
-    "Dependency",
+    "Dependencies",
     "Language",
     "Linter",
     "RepoSchema",
     "Service",
+    "Lib",
 ]

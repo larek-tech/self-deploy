@@ -1,6 +1,7 @@
 nexus-data/
 gitlab-runner/
 gitlab/
+.vscode/
 data/
 
 # Byte-compiled / optimized / DLL files

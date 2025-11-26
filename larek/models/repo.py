@@ -13,11 +13,11 @@ class Lib(BaseModel):
     version: Optional[str] = Field(None, description="Версия библиотеки")
 
 
-class Dependency(BaseModel):
-    """Зависимость проекта (библиотека)."""
+class Dependencies(BaseModel):
+    """Зависимости проекта (библиотека)."""
 
-    packet_manager: str = Field(..., description="менеджер зависимостей проекта")
-    libs: list[Lib]
+    packet_manager: str = Field(..., description="Менеджер зависимостей проекта")
+    libs: list[Lib] = Field(default_factory=list, description="Используемые библиотеки")
 
 
 class Linter(BaseModel):
@@ -49,20 +49,16 @@ class Service(BaseModel):
     path: pathlib.Path = Field(..., description="Путь до сервиса в репозитории")
     name: str = Field(..., description="Название сервиса")
     lang: Language = Field(..., description="Язык программирования")
-    dependencies: list[Dependency] = Field(
-        default_factory=list, description="Зависимости проекта"
-    )
-    packet_manager: str = Field(
-        ..., description="Пакетный менеджер (poetry, npm, gradle, go mod)"
-    )
-    libs: list[Dependency] = Field(
-        default_factory=list, description="Используемые библиотеки"
-    )
+    dependencies: Dependencies = Field(..., description="Зависимости проекта")
     configs: list[Config] = Field(
         default_factory=list, description="Конфигурационные файлы"
     )
-    dockerfile: str = Field(..., description="Путь до Dockerfile")
-    entrypoint: str = Field(..., description="Точка входа приложения")
+    dockerfiles: list[str] = Field(
+        default_factory=list, description="Пути до Dockerfile'ов"
+    )
+    entrypoints: list[str] = Field(
+        default_factory=list, description="Точки входа приложения"
+    )
     tests: str = Field(..., description="Команда для запуска тестов")
     linters: list[Linter] = Field(
         default_factory=list, description="Настроенные линтеры"
