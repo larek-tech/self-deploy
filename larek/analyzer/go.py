@@ -72,6 +72,7 @@ class GoAnalyzer(BaseAnalyzer):
                 | "node_modules"
                 | "__pycache__"
                 | ".idea"
+                | ".git"
                 | ".vscode"
                 | "mock"
                 | "mocks"
