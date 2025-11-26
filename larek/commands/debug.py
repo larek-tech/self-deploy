@@ -4,7 +4,7 @@ import pydantic_yaml
 import os
 import pathlib
 from rich.console import Console
-from larek.analyzer import repo, go, java, kotlin
+from larek.analyzer import repo, go, java, kotlin, javascript
 
 
 app = typer.Typer(help="Дебаг анализа репозитория")
@@ -37,13 +37,14 @@ def debug(
 
     repo_path = pathlib.Path(repo_path_raw)
     repo_analyzer = repo.RepoAnalyzer()
-    repo_analyzer.register_analyzer(lambda: go.GoAnalyzer())
-    repo_analyzer.register_analyzer(lambda: java.JavaAnalyzer())
-    repo_analyzer.register_analyzer(lambda: kotlin.KotlinAnalyzer())
+    repo_analyzer.register_analyzer(go.GoAnalyzer)
+    repo_analyzer.register_analyzer(java.JavaAnalyzer)
+    repo_analyzer.register_analyzer(kotlin.KotlinAnalyzer)
+    repo_analyzer.register_analyzer(javascript.JavaScriptAnalyzer)
     repo_schema = repo_analyzer.analyze(repo_path)
 
     build_path = pathlib.Path(".larek/build.yaml")
-    os.mkdir(build_path.parent)
+    os.makedirs(build_path.parent, exist_ok=True)
     pydantic_yaml.to_yaml_file(build_path, repo_schema)
 
     console.print(

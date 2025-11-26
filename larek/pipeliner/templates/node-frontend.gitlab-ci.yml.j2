@@ -1,0 +1,193 @@
+# GitLab CI Pipeline for {{ service.name }} (Frontend)
+# Language: {{ service.lang.name | capitalize }} (Node.js {{ node_version }})
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  NODE_VERSION: "{{ node_version }}"
+{% if has_dockerfiles %}
+  NEXUS_REGISTRY: "${NEXUS_REGISTRY:-localhost:8081}"
+  NEXUS_USER: "${NEXUS_USER:-admin}"
+  NEXUS_PASSWORD: "${NEXUS_PASSWORD}"
+{% endif %}
+
+.node-cache: &node-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-node"
+    paths:
+{% if package_manager == 'yarn' %}
+      - .yarn/cache/
+{% elif package_manager == 'pnpm' %}
+      - .pnpm-store/
+{% else %}
+      - node_modules/
+{% endif %}
+
+.node-setup: &node-setup
+  before_script:
+{% if package_manager == 'pnpm' %}
+    - corepack enable
+    # Use lockfile-defined pnpm version if present, otherwise fallback
+    - |
+      if [ -f pnpm-lock.yaml ]; then
+        PNPM_VERSION=$(grep -Eo 'pnpm-lock.yaml v?[0-9]+' pnpm-lock.yaml 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)*' 2>/dev/null | head -n1 || true)
+        if [ -n "$PNPM_VERSION" ]; then
+          echo "Using pnpm@$PNPM_VERSION from lockfile"
+          corepack prepare pnpm@$PNPM_VERSION --activate || corepack prepare pnpm@latest --activate
+        else
+          echo "Lockfile does not specify a pnpm version, using latest stable"
+          corepack prepare pnpm@latest --activate
+        fi
+      else
+        echo "No lockfile found — using latest pnpm"
+        corepack prepare pnpm@latest --activate
+      fi
+    - pnpm config set store-dir .pnpm-store
+{% endif %}
+    - {{ install_command }}
+
+{% if has_lint %}
+lint:
+  stage: lint
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ lint_command }}
+{% if is_typescript %}
+    - {{ package_manager }}{% if package_manager == 'npm' %} run{% endif %} tsc --noEmit
+{% endif %}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  allow_failure: true
+{% endif %}
+
+{% if has_test %}
+test:
+  stage: test
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ test_command }}
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  allow_failure: true
+{% endif %}
+
+build:
+  stage: build
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ build_command }}
+  artifacts:
+    paths:
+      - dist/
+      - build/
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+{% include '_docker.gitlab-ci.yml.j2' %}
+
+{% if has_s3 %}
+s3:
+  stage: s3
+  image: minio/mc
+  script:
+    - if [ -z "$S3_ENDPOINT" ] || [ -z "$S3_BUCKET" ] || [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_SECRET_KEY" ]; then echo "Missing S3 variables"; exit 1; fi
+    - mc alias set deploy "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" --api S3v4 || true
+    - mc cp --recursive ./dist deploy/$S3_BUCKET/
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{% endif %}
+
+{% if has_deploy %}
+{% if deploy_target == 'pages' %}
+# Deploy to GitLab Pages
+# Your site will be available at: https://<namespace>.gitlab.io/<project>/
+# Set base: '/' in vite.config.js for root deployment
+pages:
+  stage: deploy
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ build_command }}
+    - |
+      # GitLab Pages requires output in 'public/' directory
+      if [ -d "dist" ]; then
+        mv dist public
+      elif [ -d "build" ]; then
+        mv build public
+      else
+        echo "No dist/ or build/ directory found!"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - public
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  environment:
+    name: production
+    url: https://${CI_PROJECT_NAMESPACE}.gitlab.io/${CI_PROJECT_NAME}
+{% elif deploy_target == 'ssh' %}
+# Deploy to remote server via SSH
+# Required CI/CD variables:
+#   - SSH_PRIVATE_KEY: Private key for SSH authentication
+#   - DEPLOY_HOST: Target server hostname/IP
+#   - DEPLOY_USER: SSH username (default: deploy)
+#   - DEPLOY_PATH: Target path on server (default: /var/www/html)
+deploy:
+  stage: deploy
+  image: alpine:latest
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+  script:
+    - |
+      DEPLOY_USER="${DEPLOY_USER:-deploy}"
+      DEPLOY_PATH="${DEPLOY_PATH:-/var/www/html}"
+      SOURCE_DIR="dist"
+      if [ ! -d "$SOURCE_DIR" ]; then
+        SOURCE_DIR="build"
+      fi
+      if [ ! -d "$SOURCE_DIR" ]; then
+        echo "No dist/ or build/ directory found!"
+        exit 1
+      fi
+      echo "Deploying $SOURCE_DIR to $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH"
+      rsync -avz --delete "$SOURCE_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  environment:
+    name: production
+    url: https://${DEPLOY_HOST}
+{% endif %}
+{% endif %}
