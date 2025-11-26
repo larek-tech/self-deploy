@@ -1,5 +1,3 @@
-"""Pydantic схемы для хранения данных GitHub репозитория."""
-
 import pathlib
 from typing import Literal, Optional, Any
 
@@ -43,6 +41,13 @@ class Language(BaseModel):
     version: Optional[str] = Field(None, description="Версия языка")
 
 
+class Environment(BaseModel):
+    """Переменные окружения для деплоя."""
+
+    name: str = Field(..., description="Название переменной окружения")
+    path: str = Field(..., description="Путь до файла с переменными окружения")
+
+
 class Docker(BaseModel):
     """Информация о сборке в Docker."""
 
@@ -73,13 +78,6 @@ class Service(BaseModel):
     linters: list[Linter] = Field(
         default_factory=list, description="Настроенные линтеры"
     )
-
-
-class Environment(BaseModel):
-    """Переменные окружения для деплоя."""
-
-    name: str = Field(..., description="Название переменной окружения")
-    path: str = Field(..., description="Путь до файла с переменными окружения")
 
 
 class Deployment(BaseModel):

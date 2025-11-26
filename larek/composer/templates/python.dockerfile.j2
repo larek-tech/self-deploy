@@ -1,0 +1,22 @@
+FROM python:{{ python_version }}-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+
+{% if package_manager == 'poetry' %}
+RUN pip install poetry
+COPY pyproject.toml poetry.lock ./
+RUN poetry config virtualenvs.create false && poetry install --no-interaction --no-ansi
+{% elif package_manager == 'pip' %}
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+{% endif %}
+
+COPY . .
+
+{% if service.entrypoints|length > 0 %}
+CMD {{ service.entrypoints[0].split() | list }}
+{% else %}
+CMD ["python", "main.py"]
+{% endif %}

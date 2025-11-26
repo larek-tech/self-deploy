@@ -1,0 +1,11 @@
+FROM node:{{ node_version }}-alpine
+
+WORKDIR /app
+
+COPY package.json {% if package_manager == 'yarn' %}yarn.lock{% elif package_manager == 'pnpm' %}pnpm-lock.yaml{% else %}package-lock.json{% endif %} ./
+
+RUN {{ package_manager }} install --production
+
+COPY . .
+
+CMD ["{{ package_manager }}", "start"]
