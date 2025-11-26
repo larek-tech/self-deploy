@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_DIR = PROJECT_ROOT / "config"
 
 # GitLab
-GITLAB_URL = "http://gitlab.local"
+GITLAB_URL = "http://localhost"
 GITLAB_ADMIN_USER = "root"
 GITLAB_ADMIN_PASSWORD = "SuperSecurePassword123"
 

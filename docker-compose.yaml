@@ -5,15 +5,15 @@ services:
     image: "gitlab/gitlab-ce:latest"
     container_name: gitlab_server
     restart: always
-    hostname: "gitlab.local"
     environment:
       GITLAB_ROOT_PASSWORD: "SuperSecurePassword123"
       GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://gitlab.local';
+        external_url 'http://gitlab_server:80';
         gitlab_rails['gitlab_email_from'] = 'admin@larek.tech';
     ports:
       - "80:80"
       - "443:443"
+      - "2222:22"
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab
