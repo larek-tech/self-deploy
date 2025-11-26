@@ -2,7 +2,7 @@ import typer
 import pathlib
 import pydantic_yaml
 from rich.console import Console
-from larek.analyzer import repo, go, java, kotlin
+from larek.analyzer import repo, go
 
 
 app = typer.Typer(help="Дебаг анализа репозитория")
@@ -36,8 +36,6 @@ def debug(
     repo_path = pathlib.Path(repo_path_raw)
     repo_analyzer = repo.RepoAnalyzer()
     repo_analyzer.register_analyzer(lambda: go.GoAnalyzer())
-    repo_analyzer.register_analyzer(lambda: java.JavaAnalyzer())
-    repo_analyzer.register_analyzer(lambda: kotlin.KotlinAnalyzer())
     repo_schema = repo_analyzer.analyze(repo_path)
 
     console.print(

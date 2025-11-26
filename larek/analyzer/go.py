@@ -49,19 +49,33 @@ class GoAnalyzer(BaseAnalyzer):
             ),
             entrypoints=self.entrypoints,
             tests="go test -coverpkg=./... -coverprofile=coverage.out ./...",
-            linters=self.linters,
+            linters=self._linters(self.linters, root),
         )
 
     def _scan(self, root: Path):
         for f in root.glob("*"):
             if f.is_file() and self._file_filter(f):
                 self._parse_file(f)
-            elif f.is_dir():
+            elif f.is_dir() and self._dir_filter(f):
                 self._scan(f)
 
     def _file_filter(self, file: Path) -> bool:
         match file.name:
-            case "vendor/" | ".gitignore" | ".git":
+            case ".gitignore":
+                return False
+        return True
+
+    def _dir_filter(self, dir: Path) -> bool:
+        match dir.name:
+            case (
+                "vendor"
+                | "node_modules"
+                | "__pycache__"
+                | ".idea"
+                | ".vscode"
+                | "mock"
+                | "mocks"
+            ):
                 return False
         return True
 
@@ -151,3 +165,38 @@ class GoAnalyzer(BaseAnalyzer):
                     )
 
         return version, libs
+
+    def _linters(
+        self, found_linters: list[models.Linter], root: Path
+    ) -> list[models.Linter]:
+        if len(found_linters) > 0:
+            return found_linters
+
+        linters: list[models.Linter] = []
+        golangci_configs = [cfg for cfg in root.glob(".golangci.y*ml")]
+        if len(golangci_configs) > 0:
+            for config in golangci_configs:
+                linters.append(
+                    models.Linter(
+                        name="golangci-lint",
+                        config=str(config),
+                    )
+                )
+        else:
+            linters.append(
+                models.Linter(
+                    name="golangci-lint",
+                    config="default",
+                )
+            )
+
+        sonar_config = root / ".sonar-project.properties"
+        if sonar_config.exists():
+            linters.append(
+                models.Linter(
+                    name="sonar",
+                    config=str(sonar_config),
+                )
+            )
+
+        return linters

@@ -3,6 +3,8 @@ gitlab-runner/
 gitlab/
 .vscode/
 data/
+results/
+sample/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
