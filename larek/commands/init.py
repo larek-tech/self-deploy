@@ -73,6 +73,7 @@ def analyze(repo_path_raw: str):
     repo_analyzer.register_analyzer(go.GoAnalyzer)
     repo_analyzer.register_analyzer(java.JavaAnalyzer)
     repo_analyzer.register_analyzer(kotlin.KotlinAnalyzer)
+    repo_analyzer.register_analyzer(pythonlang.PythonAnalyze)
     repo_analyzer.register_analyzer(javascript.JavaScriptAnalyzer)
     repo_schema = repo_analyzer.analyze(repo_path)
 

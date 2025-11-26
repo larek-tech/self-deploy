@@ -2,134 +2,148 @@ import typing as tp
 from pathlib import Path
 from larek.analyzer import BaseAnalyzer
 from larek.models import Service
-import Array
+import re
+from typing import Tuple, Set
 
 class PythonAnalyze(BaseAnalyzer):
+    def __init__(self) -> None:
+        super().__init__() 
 
-    def analyze(self, root: Path) -> tp.Optional[Service]:
+    def analyze(self, root: Path) -> tp.Optional[Service]: 
+        if not root.is_dir():
+            return None
+
+        detected_docker=self.get_dockerfile(root)
+        detected_docker_compose = self.get_docker_compose(root)
+        packet_managers = self.get_packet_managers(root)
+        dec_libs=self.get_libs(root)
+        py_version = self.detect_python_version_by_syntax(root)
+        environment = self.get_environment(root) 
+
         return Service(
-
-            name=self.get_repo_name(root),
-            language=self.detect_language(root),
-            #На подумать
-            version=self.detect_python_version_by_syntax(root),
-            dependencies=self.get_dependencies(root),
-            packet_managers = self.get_packet_managers(root),
-            libs=self.get_libs(root),
+            path=root,
+            name=root.name,
+            language= models.Language(name="python", version = py_version),
+            dependencies=models.Dependencies(packet_manager=packet_managers, libs=dec_libs),
             config=self.get_config(root),
-            detected_docker=self.get_docker(root),
-            detected_entrypoint=self.get_entrypoint(root),
-            detected_tests=self.get_tests(root),
-            detected_linters=self.get_linters(root)
-            )
-    
-    def get_repo_name(self, root) -> str:   
+            docker=models.Docker(dockerfiles=detected_docker, compose=detected_docker_compose if detected_docker_compose else None, environment=environment),
+            entrypoints=self.get_entrypoint(root),
+            tests=self.detected_tests(root),
+            linters=self.get_linters(root),
+        )
+
+
+    def get_environment(self, root: Path) -> tp.Optional[str]:
+        env_files = {
+            '.env.prod': 'production', '.env.production': 'production',
+            '.env.staging': 'staging', '.env.stage': 'staging', 
+            '.env.test': 'testing', '.env.testing': 'testing',
+            '.env.dev': 'development', '.env.development': 'development',
+            '.env.local': 'development', '.env': 'development'
+        }
+        for env_file, env_type in env_files.items():
+            if (root / env_file).exists():
+                return env_type
+        for compose_file in root.glob('docker-compose*.yml'):
+            name = compose_file.stem.lower()
+            if 'prod' in name: return 'production'
+            elif 'stage' in name: return 'staging'  
+            elif 'test' in name: return 'testing'
+            elif 'dev' in name: return 'development'
+        
+        config_files = list(root.glob('**/settings*.py')) + list(root.glob('**/config*.py'))
+        for config_file in config_files[:2]:
+            try:
+                content = config_file.read_text()
+                if 'DEBUG = True' in content: return 'development'
+                if 'DEBUG = False' in content: return 'production'
+            except: continue
+        
+        return None
+
+    def get_dockerfile(self, root: Path) -> tp.Optional[str]:
         try:
-            return root.name
-        except:  #Типа если файл заканчивается "\" 
-            return normalized_path.name
+            for docker_file in root.glob("**/Dockerfile*"):
+                if docker_file.is_file():
+                    return str(docker_file)
+        except Exception as e:
+            print(f"Error searching Dockerfile in {root}: {e}")
+        return None
 
-    def detect_language(self, root) -> str:
-        language_indicators = {".py": "python"}
-            for repofile in root.iterdir():
-                if repofile.is_file():
-            normalized_path = root.resolve(
-                    if repofile.suffix in language_indicators:
-                        return language_indicators[repofile.suffix])
-            return "Unknown""  
+    def get_docker_compose(self, root: Path) -> tp.Optional[str]:
+        try:
+            for compose_file in root.glob("**/docker-compose*.yml"):
+                if compose_file.is_file():
+                    return str(compose_file)
+        except Exception as e:
+            print(f"Error searching docker-compose in {root}: {e}")
+        return None
 
-    #Зависимости
-    def get_dependencies(self, root) -> list[str]:
-        dependencies = []  #list
 
-        setup_file = root / "setup.py" #Я не нашел, как он может называться по-другому, и вроде один файл на репо
-        if setup_file.exists():
-            dependencies.append("setup.py")
-
-        toml_file = root / "pyproject.toml" #Я не нашел, как он может называться по-другому, и вроде один файл на репо
-        if toml_file.exists():
-            dependencies.append("pyproject.toml")
-
-        req_files = list(root.glob("requirements*.txt"))
-        for file in req_files:
-            dependencies.append(file.name)
-
-        return dependencies
-
-    def get_packet_managers(self, root) -> str:
-         managers = []
-        validators = [
-            self._is_poetry_project,
-            self._is_pipenv_project, 
-            self._is_pdm_project,
-            self._is_rye_project,
-            self._is_hatch_project,
-            self._is_uv_project,
-            self._is_setuptools_project,
-            self._is_requirements_project
+    def get_packet_managers(self, root: Path) -> tp.Optional[str]:
+        package_managers = [
+            ('poetry', self._is_poetry_project),
+            ('pipenv', self._is_pipenv_project),
+            ('pdm', self._is_pdm_project),
+            ('rye', self._is_rye_project),
+            ('hatch', self._is_hatch_project),
+            ('uv', self._is_uv_project),
+            ('setuptools', self._is_setuptools_project),
+            ('pip', self._is_requirements_project),
         ]
-        
-        for validator in validators:
-            manager = validator(root)
-            if manager:
-                managers.append(manager)
-        
-        return managers
+    
+        for name, validator in package_managers:
+            if validator(root):
+                return name  
+        return None
 
-    def _is_poetry_project(self, root: Path) -> str:
+    def _is_poetry_project(self, root: Path) -> bool:
         if (root / 'poetry.lock').exists():
-            return 'poetry'
-  
+            return True 
         pyproject = root / 'pyproject.toml'
         if pyproject.exists():
-            content = pyproject.read_text()
-            if '[tool.poetry]' in content:
-                return 'poetry'
-        return None
+            try:
+                return '[tool.poetry]' in pyproject.read_text()
+            except Exception:
+                return False
+        return False
 
-    def _is_pipenv_project(self, root: Path) -> str:
-        if (root / 'Pipfile').exists():
-            return 'pipenv'
-        return None
+    def _is_pipenv_project(self, root: Path) -> bool:
+        return (root / 'Pipfile').exists()
 
-    def _is_pdm_project(self, root: Path) -> str:
+    def _is_pdm_project(self, root: Path) -> bool:
         if (root / 'pdm.lock').exists() or (root / 'pdm.toml').exists():
-            return 'pdm'
+            return True
+        
         pyproject = root / 'pyproject.toml'
         if pyproject.exists():
-            content = pyproject.read_text()
-            if '[tool.pdm]' in content:
-                return 'pdm'
-        return None
+            try:
+                return '[tool.pdm]' in pyproject.read_text()
+            except Exception:
+                return False
+        return False
 
-    def _is_rye_project(self, root: Path) -> str:
-        if (root / 'requirements.lock').exists() or (root / 'rye.toml').exists():
-            return 'rye'
-        return None
+    def _is_rye_project(self, root: Path) -> bool:
+        return (root / 'requirements.lock').exists() or (root / 'rye.toml').exists()
 
-    def _is_hatch_project(self, root: Path) -> str:
+    def _is_hatch_project(self, root: Path) -> bool:
         pyproject = root / 'pyproject.toml'
         if pyproject.exists():
-            content = pyproject.read_text()
-            if '[tool.hatch]' in content:
-                return 'hatch'
-        return None
+            try:
+                return '[tool.hatch]' in pyproject.read_text()
+            except Exception:
+                return False
+        return False
 
-    def _is_uv_project(self, root: Path) -> str:
-        if (root / 'uv.lock').exists():
-            return 'uv'
-        return None
+    def _is_uv_project(self, root: Path) -> bool:
+        return (root / 'uv.lock').exists()
 
-    def _is_setuptools_project(self, root: Path) -> str:
-        if (root / 'setup.py').exists() or (root / 'setup.cfg').exists():
-            return 'setuptools'
-        return None
+    def _is_setuptools_project(self, root: Path) -> bool:
+        return (root / 'setup.py').exists() or (root / 'setup.cfg').exists()
 
-    def _is_requirements_project(self, root: Path) -> str:
+    def _is_requirements_project(self, root: Path) -> bool:
         requirements_files = list(root.glob('requirements*.txt'))
-        if requirements_files and not self._has_modern_package_manager(root):
-            return 'pip-requirements'
-        return None
+        return bool(requirements_files and not self._has_modern_package_manager(root))
 
     def _has_modern_package_manager(self, root: Path) -> bool:
         modern_indicators = [
@@ -138,18 +152,30 @@ class PythonAnalyze(BaseAnalyzer):
         ]
         return any((root / indicator).exists() for indicator in modern_indicators)
 
-
-
-    #библитеки импорта
     def get_libs(self, root) -> list[str]:
         libraries = []
-        req_files = list(root.glob("**/requirements*.txt")) #Тут нашел альтернативы, звёздочкой вроде их учитываю, может в папках разных храниться
-        for file in req_files:
-            with open(file, "r", encoding='utf-8') as f:
-                libraries.extend(line.strip() for line in f if line.strip() and not line.startswith("#") and not line.startswith("-r") and not line.startswith("--") and not line.startswith("-f"))
-        return libraries
+        try:
+            req_files = list(root.glob("**/requirements*.txt")) 
+            for file in req_files:
+                try:
+                    with open(file, "r", encoding='utf-8', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if (line and not line.startswith("#") 
+                                and not line.startswith("-r") 
+                                and not line.startswith("--") 
+                                and not line.startswith("-f")):
+                            
+                                pkg_name = line.split('==')[0].split('>=')[0].split('<=')[0].strip()
+                                if pkg_name:
+                                    libraries.append(pkg_name)
+                except Exception as e:
+                    print(f"Error reading {file}: {e}")
+                    continue
+        except Exception as e:
+            print(f"Error in get_libs: {e}")
+        return list(set(libraries)) 
   
-    #сторонние файлы
     def get_config(self, root) -> list[str]:
         config_files: tp.Set[str] = set() 
         patterns = ['**/*.cfg', '**/*.ini', '**/*.yml', '**/*.yaml', '**/.env*', '**/config/*']
@@ -159,55 +185,27 @@ class PythonAnalyze(BaseAnalyzer):
                     config_files.add(file.name)
         return list(config_files)
 
-    def get_docker(self, root) -> str:
-        for docker_file in root.glob("**/Dockerfile*"):
-            return str(docker_file)
-        for compose_file in root.glob("**/docker-compose*.yml"):
-            return str(compose_file)
-        return None
-    #Надо сделать dockerfile, если его нет
-    
     def get_entrypoint(self, root) -> str:
-
         entrypoints = [
-            "main.py",
-            "app.py", 
-            "run.py",
-            "manage.py",  
-            "wsgi.py",    
-            "asgi.py",   
-            "application.py",
-            root.name + ".py",  
-        ] 
+            "main.py", "app.py", "run.py", "manage.py",  
+            "wsgi.py", "asgi.py", "application.py", root.name + ".py"
+        ]       
         for candidate in entrypoints:
-            candidate_file = root / candidate
-            if candidate_file.exists():
-                with open(candidate_file, "r", encoding='utf-8') as f:
-                    content = f.read()
-                    if "if __name__ == '__main__':" in content:
-                        return str(candidate_file)
-                    elif any(keyword in content for keyword in ["main()", "app.run", "manage.run", "execute"]):
-                        return str(candidate_file)
+            try:
+                candidate_file = root / candidate
+                if candidate_file.exists():
+                    with open(candidate_file, "r", encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                        if "if __name__ == '__main__':" in content:
+                            return str(candidate_file)
+                        elif any(keyword in content for keyword in ["main()", "app.run", "manage.run", "execute"]):
+                            return str(candidate_file)
+            except Exception as e:
+                print(f"Error checking entrypoint {candidate}: {e}")
+                continue
     
-        return ""
+        return "" 
 
-    #Пока не понимаю, как из setup.py достать, это заносить не буду, entrypoints
-    #setup_file = root / "setup.py"
-    #if setup_file.exists():
-        #with open(setup_file, "r", encoding='utf-8') as f:
-            #content = f.read()
-            #if "console_scripts" in content:    
-                # Упрощенный парсинг - ищем шаблон типа "name=module:function"
-                #import re
-                #matches = re.findall(r'console_scripts\s*=\s*\[([^\]]+)\]', content, re.DOTALL)
-                #if matches:
-                    # Берем первый скрипт из console_scripts
-                #    scripts = re.findall(r'"([^"]+)"', matches[0])
-                #    if scripts:
-                #        script_def = scripts[0].split('=')
-                #        if len(script_def) == 2:
-                #            module_path = script_def[1].split(':')[0]
-                #        return f"{module_path.replace('.', '/')}.py"  
 
     def detected_tests(self, root) -> str:
         test_commands = []
@@ -218,7 +216,7 @@ class PythonAnalyze(BaseAnalyzer):
             'tox.ini': 'pytest',        
             'manage.py': 'python manage.py test',  
             'noxfile.py': 'nox', 
-        }
+        }        
         for config_file, command in config_files.items():
             if (root / config_file).exists():
                 if config_file == 'manage.py':
@@ -226,12 +224,17 @@ class PythonAnalyze(BaseAnalyzer):
                 else:
                     if self._has_test_config(root / config_file):
                         test_commands.append(command)
-
+        
         setup_py = root / 'setup.py'
         if setup_py.exists():
-            content = setup_py.read_text()
-            if 'test_suite' in content or 'pytest' in content:
-                test_commands.append('python setup.py test')
+            try:
+                content = setup_py.read_text()
+                if 'test_suite' in content or 'pytest' in content:
+                    test_commands.append('python setup.py test')
+            except:
+                pass  
+
+ 
         test_dirs = ['tests', 'test', 'spec']
         for test_dir in test_dirs:
             if (root / test_dir).exists():
@@ -240,28 +243,40 @@ class PythonAnalyze(BaseAnalyzer):
 
         makefile = root / 'Makefile'
         if makefile.exists():
-            content = makefile.read_text()
-            if 'test:' in content or 'pytest' in content:
-                test_commands.append('make test')
+            try:
+                content = makefile.read_text()
+                if 'test:' in content or 'pytest' in content:
+                    test_commands.append('make test')
+            except:
+                pass 
+
 
         tox_ini = root / 'tox.ini'
         if tox_ini.exists():
-            content = tox_ini.read_text()
-            if '[testenv]' in content:
-                test_commands.append('tox')
+            try:
+                content = tox_ini.read_text()
+                if '[testenv]' in content:
+                    test_commands.append('tox')
+            except:
+                pass 
                 
-        python_files = list(root.glob('**/test_*.py')) + list(root.glob('**/*_test.py'))
-        if python_files and 'unittest' in str(python_files[0].read_text()):
-            test_commands.append('python -m unittest discover')
 
-        return test_commands[0] if test_commands else None #Команда по запуску теста
+        python_files = list(root.glob('**/test_*.py')) + list(root.glob('**/*_test.py'))
+        if python_files:
+            try:
+                if 'unittest' in python_files[0].read_text():
+                    test_commands.append('python -m unittest discover')
+            except:
+                pass  
+
+        return test_commands[0] if test_commands else None
+
         
 
 
     def get_linters(self, root: Path) -> tp.Optional[str]:
 
         detected_linters = []
-
         detected_linters.extend(self._find_by_config_files(root))    
         detected_linters.extend(self._find_by_dependencies(root))
         detected_linters.extend(self._find_by_build_tools(root))
@@ -272,31 +287,20 @@ class PythonAnalyze(BaseAnalyzer):
         linters = []
     
         config_patterns = {
-        # Flake8
         '.flake8': 'flake8',
         'setup.cfg': self._check_flake8_in_setup_cfg(root),
-        
-        # Pylint
         '.pylintrc': 'pylint',
         'pylintrc': 'pylint',
         'setup.cfg': self._check_pylint_in_setup_cfg(root),
-        
-        # Black
         'pyproject.toml': self._check_black_in_pyproject(root),
-        
-        # MyPy
         'mypy.ini': 'mypy .',
         '.mypy.ini': 'mypy .',
         'pyproject.toml': self._check_mypy_in_pyproject(root),
-        
-        # Bandit
         '.bandit': 'bandit -r .',
         'bandit.yaml': 'bandit -r .',
-        
-        # Pydocstyle
         '.pydocstyle': 'pydocstyle',
-        'pydocstyle.ini': 'pydocstyle',
-        }
+        'pydocstyle.ini': 'pydocstyle'}
+
         for config_file, linter_command in config_patterns.items():
             config_path = root / config_file
             if config_path.exists():
@@ -332,29 +336,39 @@ class PythonAnalyze(BaseAnalyzer):
         for dep_file in dependency_files:
             dep_path = root / dep_file
             if dep_path.exists():
-                content = dep_path.read_text().lower()
-                for pkg, command in linter_packages.items():
-                    if pkg in content:
-                        linters.append(command)
+                try:
+                    content = dep_path.read_text().lower()
+                    for pkg, command in linter_packages.items():
+                        if pkg in content:
+                            linters.append(command)
+                except:
+                    continue  
         
         return linters
 
     def _find_by_build_tools(self, root: Path) -> list[str]:
         linters = []
+ 
         makefile_path = root / 'Makefile'
         if makefile_path.exists():
-            content = makefile_path.read_text()
-            if 'lint:' in content:
-                linters.append('make lint')
-            elif 'flake8' in content:
-                linters.append('flake8')
-            elif 'pylint' in content:
-                linters.append('pylint')
+            try:
+                content = makefile_path.read_text()
+                if 'lint:' in content:
+                    linters.append('make lint')
+                elif 'flake8' in content:
+                    linters.append('flake8')
+                elif 'pylint' in content:
+                    linters.append('pylint')
+            except:
+                pass  
         tox_path = root / 'tox.ini'
         if tox_path.exists():
-            content = tox_path.read_text()
-            if '[testenv:lint]' in content:
-                linters.append('tox -e lint')
+            try:
+                content = tox_path.read_text()
+                if '[testenv:lint]' in content:
+                    linters.append('tox -e lint')
+            except:
+                pass  
 
         precommit_path = root / '.pre-commit-config.yaml'
         if precommit_path.exists():
@@ -362,84 +376,92 @@ class PythonAnalyze(BaseAnalyzer):
 
         return linters
 
-
-    def _check_flake8_in_setup_cfg(self, root: Path) -> str:
-        
+    def _check_flake8_in_setup_cfg(self, root: Path) -> tp.Optional[str]:
         setup_cfg_path = root / 'setup.cfg'
         if setup_cfg_path.exists():
-            content = setup_cfg_path.read_text()
-            if '[flake8]' in content or '[tool:flake8]' in content:
-                return 'flake8'
+            try:
+                content = setup_cfg_path.read_text()
+                if '[flake8]' in content or '[tool:flake8]' in content:
+                    return 'flake8'
+            except:
+                pass  
         return None
 
     def _check_pylint_in_setup_cfg(self, root: Path) -> tp.Optional[str]:
         setup_cfg_path = root / 'setup.cfg'
         if setup_cfg_path.exists():
-            content = setup_cfg_path.read_text()
-            if '[pylint]' in content or '[tool:pylint]' in content:
-                return 'pylint'
+            try:
+                content = setup_cfg_path.read_text()
+                if '[pylint]' in content or '[tool:pylint]' in content:
+                    return 'pylint'
+            except:
+                pass
         return None
 
     def _check_black_in_pyproject(self, root: Path) -> tp.Optional[str]:
         pyproject_path = root / 'pyproject.toml'
         if pyproject_path.exists():
-            content = pyproject_path.read_text()
-            if '[tool.black]' in content:
-                return 'black --check .'
+            try:
+                content = pyproject_path.read_text()
+                if '[tool.black]' in content:
+                    return 'black --check .'
+            except:
+                pass
         return None
 
     def _check_mypy_in_pyproject(self, root: Path) -> tp.Optional[str]:
         pyproject_path = root / 'pyproject.toml'
         if pyproject_path.exists():
-            content = pyproject_path.read_text()
-            if '[tool.mypy]' in content:
-                return 'mypy .'
+            try:
+                content = pyproject_path.read_text()
+                if '[tool.mypy]' in content:
+                    return 'mypy .'
+            except:
+                pass  
         return None
 
-# !*! на обсуждение
-    def detect_python_version_by_syntax(self,root) -> str:
- 
-        #Для обсуждения, взял, на мой взгляд, самый действующий вариант для поиска версии
+    def detect_python_version_by_syntax(self,root) -> str: 
         version_features = {
            (3, 8): [
-               'walrus_operator',        # Оператор := (моржовый оператор)
-               'positional_only_args',   # Позиционные аргументы с /
-                'fstring_self_documenting' # f-строки с = для отладки
+               'walrus_operator',        
+               'positional_only_args',   
+                'fstring_self_documenting' 
                 ],
             (3, 9): [
-                'dict_union_operators',   # Операторы | и |= для словарей
-                'str_remove_methods',     # Методы removeprefix() и removesuffix()
-                'type_hinting_generics',  # Встроенная поддержка generic в типах
-                'zoneinfo_module'         # Модуль zoneinfo (косвенный признак)
+                'dict_union_operators',  
+                'str_remove_methods',     
+                'type_hinting_generics', 
+                'zoneinfo_module' 
             ],
             (3, 10): [
-                'match_statement',        # Структурное сопоставление (match/case)
-                'union_operator_in_types', # Оператор | в аннотациях типов
-                'parenthesized_context_managers' # Менеджеры контекста в скобках
+                'match_statement', 
+                'union_operator_in_types',
+                'parenthesized_context_managers'
             ],
             (3, 11): [
-                'exception_group',        # Группы исключений и except*
-                'try_star_syntax',        # Синтаксис try* для асинхронных исключений
-                'variadic_generics',      # Вариативные дженерики
-                'tomllib_module'          # Модуль tomllib (косвенный признак)
+                'exception_group',  
+                'try_star_syntax',   
+                'variadic_generics', 
+                'tomllib_module'  
             ],
             (3, 12): [
-                'type_parameter_syntax',  # Новый синтаксис параметров типов
-                'fstring_debugging',      # Улучшенная отладка f-строк
-                'pattern_matching_enhancements' # Улучшения в match/case
+                'type_parameter_syntax', 
+                'fstring_debugging',
+                'pattern_matching_enhancements'
             ]
-        }
+            }
 
         found_features: tp.Set[str] = set()
+        py_files = list(root.glob("**/*.py"))[:30]
 
-        for py_file in root.glob("**/*.py"):
+        for py_file in py_files:
             if py_file.is_file():
                 try:
                     content = py_file.read_text(encoding='utf-8')
                     if ':=' in content:
-                       found_features.add('walrus_operator')
+                        found_features.add('walrus_operator')
                     if re.search(r'\bmatch\b.*\bcase\b', content):
-                    found_features.add('match_statement')
+                        found_features.add('match_statement')
                     if 'removeprefix' in content or 'removesuffix' in content:
                         found_features.add('str_remove_methods')
                     if re.search(r'\w+\s*\|\s*\w+', content) and any(word in content for word in ['dict', 'Dict', 'typing.Dict']):
@@ -455,26 +477,28 @@ class PythonAnalyze(BaseAnalyzer):
                     continue
         min_version: Tuple[int, int] = (3, 7)
         sorted_versions = sorted(version_features.keys())
-            for version in sorted_versions:
+        for version in sorted_versions:
             features_in_version = version_features[version]
             if any(feature in found_features for feature in features_in_version):
                 min_version = max(min_version, version)
-        major, minor = min_version
+                major, minor = min_version
         if min_version > (3, 7):
             return f"Python {major}.{minor}+"
         else:
             return "Python 3.7+"
 
-
     def _has_test_config(self, config_path: Path) -> bool:
-        content = config_path.read_text()
-        if config_path.name == 'pyproject.toml':
-            return '[tool.pytest]' in content or '[tool.pytest.ini_options]' in content
-        elif config_path.name == 'setup.cfg':
-            return '[tool:pytest]' in content or '[aliases]' in content and 'test' in content 
-        elif config_path.name == 'tox.ini':
-            return '[pytest]' in content or '[testenv]' in content 
-        return True 
+        try:
+            content = config_path.read_text()
+            if config_path.name == 'pyproject.toml':
+                return '[tool.pytest]' in content or '[tool.pytest.ini_options]' in content
+            elif config_path.name == 'setup.cfg':
+                return '[tool:pytest]' in content or ('[aliases]' in content and 'test' in content)
+            elif config_path.name == 'tox.ini':
+                return '[pytest]' in content or '[testenv]' in content
+            return True
+        except:
+            return False
 
 
 
