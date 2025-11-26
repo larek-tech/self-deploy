@@ -32,8 +32,8 @@ class PipelineBuilder(ABC):
     def get_docker_context(self, service: Service) -> Dict[str, Any]:
         """Get Docker build context for the service."""
         return {
-            "has_dockerfiles": len(service.docker) > 0,
-            "dockerfiles": service.docker,
+            "has_dockerfiles": len(service.docker.dockerfiles) > 0,
+            "dockerfiles": service.docker.dockerfiles,
             "image_name": service.name,
         }
 
@@ -43,8 +43,10 @@ class GoPipelineBuilder(PipelineBuilder):
     Pipeline builder for Go projects.
     """
 
+    default_linter_cmd = "golangci-lint run ./..."
+
     def generate(self, service: Service) -> str:
-        has_dockerfiles = len(service.docker) > 0
+        has_dockerfiles = len(service.docker.dockerfiles) > 0
         context = {
             "service": service,
             "go_version": service.lang.version or "1.21",
@@ -66,7 +68,7 @@ class PythonPipelineBuilder(PipelineBuilder):
 
     def generate(self, service: Service) -> str:
         package_manager = service.dependencies.packet_manager
-        has_dockerfiles = len(service.docker) > 0
+        has_dockerfiles = len(service.docker.dockerfiles) > 0
 
         # Determine install and lint commands based on package manager
         if package_manager == "poetry":
@@ -108,7 +110,7 @@ class NodePipelineBuilder(PipelineBuilder):
         package_manager = service.dependencies.packet_manager
         is_typescript = service.lang.name == "typescript"
         is_spa = self.is_spa(service)
-        has_dockerfiles = len(service.docker) > 0
+        has_dockerfiles = len(service.docker.dockerfiles) > 0
 
         # Determine commands based on package manager
         if package_manager == "yarn":
@@ -148,7 +150,7 @@ class JavaPipelineBuilder(PipelineBuilder):
 
     def generate(self, service: Service) -> str:
         package_manager = service.dependencies.packet_manager
-        has_dockerfiles = len(service.docker) > 0
+        has_dockerfiles = len(service.docker.dockerfiles) > 0
 
         # Determine commands based on build tool
         if "gradle" in package_manager.lower():
@@ -178,7 +180,7 @@ class KotlinPipelineBuilder(PipelineBuilder):
 
     def generate(self, service: Service) -> str:
         package_manager = service.dependencies.packet_manager
-        has_dockerfiles = len(service.docker) > 0
+        has_dockerfiles = len(service.docker.dockerfiles) > 0
 
         if "maven" in package_manager.lower():
             build_cmd = "mvn package -DskipTests"
