@@ -119,7 +119,7 @@ class NodePipelineBuilder(PipelineBuilder):
             test_cmd = "yarn test"
             build_cmd = "yarn build"
         elif package_manager == "pnpm":
-            install_cmd = "pnpm install --frozen-lockfile"
+            install_cmd = "pnpm install --no-frozen-lockfile"
             lint_cmd = "pnpm lint"
             test_cmd = "pnpm test"
             build_cmd = "pnpm build"
@@ -142,7 +142,12 @@ class NodePipelineBuilder(PipelineBuilder):
             "is_spa": is_spa,
             **self.get_docker_context(service),
         }
-        return self.render_template("node.gitlab-ci.yml.j2", context)
+        template_name = (
+            "node-frontend.gitlab-ci.yml.j2"
+            if is_spa
+            else "node-backend.gitlab-ci.yml.j2"
+        )
+        return self.render_template(template_name, context)
 
 
 class JavaPipelineBuilder(PipelineBuilder):

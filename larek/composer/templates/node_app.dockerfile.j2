@@ -1,3 +1,17 @@
+FROM node:{{ node_version }}-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json {% if package_manager == 'yarn' %}yarn.lock{% elif package_manager == 'pnpm' %}pnpm-lock.yaml{% else %}package-lock.json{% endif %} ./
+
+RUN {{ package_manager }} install
+
+COPY . .
+
+{% if is_typescript %}
+RUN {{ package_manager }} run build
+{% endif %}
+
 FROM node:{{ node_version }}-alpine
 
 WORKDIR /app
@@ -6,6 +20,10 @@ COPY package.json {% if package_manager == 'yarn' %}yarn.lock{% elif package_man
 
 RUN {{ package_manager }} install --production
 
+{% if is_typescript %}
+COPY --from=builder /app/dist ./dist
+{% else %}
 COPY . .
+{% endif %}
 
 CMD ["{{ package_manager }}", "start"]

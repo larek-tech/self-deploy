@@ -1,0 +1,101 @@
+# GitLab CI Pipeline for {{ service.name }} (Frontend)
+# Language: {{ service.lang.name | capitalize }} (Node.js {{ node_version }})
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  NODE_VERSION: "{{ node_version }}"
+{% if has_dockerfiles %}
+  NEXUS_REGISTRY: "${NEXUS_REGISTRY:-localhost:8081}"
+  NEXUS_USER: "${NEXUS_USER:-admin}"
+  NEXUS_PASSWORD: "${NEXUS_PASSWORD}"
+{% endif %}
+
+.node-cache: &node-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-node"
+    paths:
+{% if package_manager == 'yarn' %}
+      - .yarn/cache/
+{% elif package_manager == 'pnpm' %}
+      - .pnpm-store/
+{% else %}
+      - node_modules/
+{% endif %}
+
+.node-setup: &node-setup
+  before_script:
+{% if package_manager == 'pnpm' %}
+    - corepack enable
+    # Use lockfile-defined pnpm version if present, otherwise fallback
+    - |
+      if [ -f pnpm-lock.yaml ]; then
+        PNPM_VERSION=$(grep -Eo 'pnpm-lock.yaml v?[0-9]+' pnpm-lock.yaml | grep -Eo '[0-9]+(\.[0-9]+)*' | head -n1)
+        if [ -n "$PNPM_VERSION" ]; then
+          echo "Using pnpm@$PNPM_VERSION from lockfile"
+          corepack prepare pnpm@$PNPM_VERSION --activate
+        else
+          echo "Lockfile does not specify a pnpm version, using latest stable"
+          corepack prepare pnpm@latest --activate
+        fi
+      else
+        echo "No lockfile found — using latest pnpm"
+        corepack prepare pnpm@latest --activate
+      fi
+    - pnpm config set store-dir .pnpm-store
+{% endif %}
+    - {{ install_command }}
+
+lint:
+  stage: lint
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ lint_command }}
+{% if is_typescript %}
+    - {{ package_manager }}{% if package_manager == 'npm' %} run{% endif %} tsc --noEmit
+{% endif %}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  stage: test
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ test_command }}
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:
+  stage: build
+  image: node:{{ node_version }}-alpine
+  <<: *node-cache
+  <<: *node-setup
+  script:
+    - {{ build_command }}
+  artifacts:
+    paths:
+      - dist/
+      - build/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+{% include '_docker.gitlab-ci.yml.j2' %}

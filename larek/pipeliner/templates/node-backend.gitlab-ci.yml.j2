@@ -1,4 +1,4 @@
-# GitLab CI Pipeline for {{ service.name }}
+# GitLab CI Pipeline for {{ service.name }} (Backend)
 # Language: {{ service.lang.name | capitalize }} (Node.js {{ node_version }})
 
 stages:
@@ -31,6 +31,7 @@ variables:
 {% if package_manager == 'pnpm' %}
     - corepack enable
     - corepack prepare pnpm@latest --activate
+    - pnpm config set store-dir .pnpm-store
 {% endif %}
     - {{ install_command }}
 
@@ -67,6 +68,7 @@ test:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+{% if is_typescript %}
 build:
   stage: build
   image: node:{{ node_version }}-alpine
@@ -76,16 +78,12 @@ build:
     - {{ build_command }}
   artifacts:
     paths:
-{% if is_spa %}
       - dist/
-      - build/
-{% else %}
       - lib/
-      - dist/
-{% endif %}
     expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
+{% endif %}
 
 {% include '_docker.gitlab-ci.yml.j2' %}

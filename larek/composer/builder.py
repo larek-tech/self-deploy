@@ -58,12 +58,14 @@ class NodeBuilder(DockerfileBuilder):
     def generate(self, service: Service) -> str:
         is_spa = self.is_spa(service)
         template_name = "node_spa.dockerfile.j2" if is_spa else "node_app.dockerfile.j2"
+        is_typescript = service.lang.name == "typescript"
 
         context = {
             "service": service,
             "node_version": service.lang.version or "20",
             "package_manager": service.dependencies.packet_manager,
             "build_command": "build" if is_spa else None,  # Infer or get from config
+            "is_typescript": is_typescript,
         }
         return self.render_template(template_name, context)
 
@@ -80,8 +82,9 @@ class Composer:
         }
 
     def get_dockerfile(self, service: Service) -> str:
-        # if service.dockerfiles != "":
-        # return
+        if service.docker.dockerfiles:
+            with open(service.docker.dockerfiles[0], "r", encoding="utf-8") as f:
+                return f.read()
 
         builder = self.builders.get(service.lang.name)
         if not builder:
