@@ -466,15 +466,15 @@ class PythonAnalyze(BaseAnalyzer):
             return "Python 3.7+"
 
 
-def _has_test_config(self, config_path: Path) -> bool:
-    content = config_path.read_text()
-    if config_path.name == 'pyproject.toml':
-        return '[tool.pytest]' in content or '[tool.pytest.ini_options]' in content
-    elif config_path.name == 'setup.cfg':
-        return '[tool:pytest]' in content or '[aliases]' in content and 'test' in content 
-    elif config_path.name == 'tox.ini':
-        return '[pytest]' in content or '[testenv]' in content 
-    return True 
+    def _has_test_config(self, config_path: Path) -> bool:
+        content = config_path.read_text()
+        if config_path.name == 'pyproject.toml':
+            return '[tool.pytest]' in content or '[tool.pytest.ini_options]' in content
+        elif config_path.name == 'setup.cfg':
+            return '[tool:pytest]' in content or '[aliases]' in content and 'test' in content 
+        elif config_path.name == 'tox.ini':
+            return '[pytest]' in content or '[testenv]' in content 
+        return True 
 
 
 
