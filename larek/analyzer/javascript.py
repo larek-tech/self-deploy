@@ -56,14 +56,6 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             linters=self.linters,
         )
 
-    def _find_repo_root(self, path: Path) -> tp.Optional[Path]:
-        current = path
-        while current.parent != current:
-            if (current / ".git").exists():
-                return current
-            current = current.parent
-        return None
-    
     def _detect_package_manager(self, root: Path) -> str:
         if (root / "bun.lockb").exists():
             return "bun"
@@ -71,16 +63,6 @@ class JavaScriptAnalyzer(BaseAnalyzer):
             return "yarn"
         if (root / "pnpm-lock.yaml").exists():
             return "pnpm"
-        
-        repo_root = self._find_repo_root(root)
-        if repo_root:
-            if (repo_root / "bun.lockb").exists():
-                return "bun"
-            if (repo_root / "yarn.lock").exists():
-                return "yarn"
-            if (repo_root / "pnpm-lock.yaml").exists():
-                return "pnpm"
-        
         return "npm"
 
     def _is_typescript(self, root: Path) -> bool:
