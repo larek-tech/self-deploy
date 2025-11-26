@@ -9,6 +9,11 @@ stages:
 variables:
   PYTHON_VERSION: "{{ python_version }}"
   PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+{% if has_dockerfiles %}
+  NEXUS_REGISTRY: "${NEXUS_REGISTRY:-localhost:8081}"
+  NEXUS_USER: "${NEXUS_USER:-admin}"
+  NEXUS_PASSWORD: "${NEXUS_PASSWORD}"
+{% endif %}
 
 .python-cache: &python-cache
   cache:
@@ -92,3 +97,5 @@ build:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
+
+{% include '_docker.gitlab-ci.yml.j2' %}

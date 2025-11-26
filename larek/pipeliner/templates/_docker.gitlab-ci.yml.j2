@@ -1,0 +1,33 @@
+{# Docker build and push template - include this in language-specific templates #}
+{% if has_dockerfiles %}
+
+# Docker Build & Push Stage
+.docker-build: &docker-build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_DRIVER: overlay2
+  before_script:
+    - docker login -u "${NEXUS_USER}" -p "${NEXUS_PASSWORD}" "${NEXUS_REGISTRY}"
+
+{% for dockerfile in dockerfiles %}
+docker-build-{{ loop.index }}:
+  stage: docker
+  <<: *docker-build
+  script:
+    - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+    - docker build -f {{ dockerfile }} -t "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}" .
+    - docker push "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}"
+    # Tag as latest for default branch
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}" "${NEXUS_REGISTRY}/{{ image_name }}:latest"
+        docker push "${NEXUS_REGISTRY}/{{ image_name }}:latest"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+{% endfor %}
+{% endif %}

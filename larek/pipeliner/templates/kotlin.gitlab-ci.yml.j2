@@ -13,6 +13,11 @@ variables:
 {% else %}
   MAVEN_OPTS: "-Dmaven.repo.local=${CI_PROJECT_DIR}/.m2/repository"
 {% endif %}
+{% if has_dockerfiles %}
+  NEXUS_REGISTRY: "${NEXUS_REGISTRY:-localhost:8081}"
+  NEXUS_USER: "${NEXUS_USER:-admin}"
+  NEXUS_PASSWORD: "${NEXUS_PASSWORD}"
+{% endif %}
 
 .kotlin-cache: &kotlin-cache
   cache:
@@ -72,3 +77,5 @@ build:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
+
+{% include '_docker.gitlab-ci.yml.j2' %}

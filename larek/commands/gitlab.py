@@ -33,7 +33,4 @@ def gitlab(
 
         rprint("pipeline file generated for " + srv.name)
 
-        rprint(
-            f"[green]2. Run the Docker container:[/green] docker run --rm -it {srv.name}:latest"
-        )
         rprint("\n")
