@@ -1,6 +1,8 @@
 import typer
 import pathlib
 import pydantic_yaml
+import os
+import pathlib
 from rich.console import Console
 from larek.analyzer import repo, go
 
@@ -38,6 +40,10 @@ def debug(
     repo_analyzer.register_analyzer(lambda: go.GoAnalyzer())
     repo_schema = repo_analyzer.analyze(repo_path)
 
+    build_path = pathlib.Path(".larek/build.yaml")
+    os.mkdir(build_path.parent)
+    pydantic_yaml.to_yaml_file(build_path, repo_schema)
+
     console.print(
-        f"[green]Результат анализа репозитория: \n{pydantic_yaml.to_yaml_str(repo_schema)}[/green]"
+        f"[green]Результат анализа репозитория записан в файл .larek/build.yaml.[/green]"
     )
