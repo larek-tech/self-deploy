@@ -12,8 +12,10 @@ class GoAnalyzer(BaseAnalyzer):
         self.go_version: str = ""
         self.libs: list[models.Lib] = []
         self.configs: list[models.Config] = []
-        self.dockerfiles: list[str] = []
         self.entrypoints: list[str] = []
+        self.compose_file: str = ""
+        self.dockerfiles: list[str] = []
+        self.environment: list[models.Environment] = []
         self.linters: list[models.Linter] = []
 
     def analyze(self, root: Path) -> tp.Optional[models.Service]:
@@ -40,14 +42,18 @@ class GoAnalyzer(BaseAnalyzer):
                 libs=self.libs,
             ),
             configs=self.configs,
-            dockerfiles=self.dockerfiles,
+            docker=models.Docker(
+                dockerfiles=self.dockerfiles,
+                compose=self.compose_file if self.compose_file else None,
+                environment=self.environment,
+            ),
             entrypoints=self.entrypoints,
             tests="go test -coverpkg=./... -coverprofile=coverage.out ./...",
             linters=self.linters,
         )
 
     def _scan(self, root: Path):
-        for f in root.iterdir():
+        for f in root.glob("*"):
             if f.is_file() and self._file_filter(f):
                 self._parse_file(f)
             elif f.is_dir():
@@ -66,6 +72,9 @@ class GoAnalyzer(BaseAnalyzer):
 
             case "Dockerfile":
                 self.dockerfiles.append(str(file))
+
+            case "docker-compose.yml" | "docker-compose.yaml":
+                self.compose_file = str(file)
 
             case ".golangci.yml" | ".golangci.yaml":
                 self.linters.append(
@@ -88,7 +97,7 @@ class GoAnalyzer(BaseAnalyzer):
                     "config" in file.name
                     or "cfg" in file.name
                     or "settings" in file.name
-                    or ".env" in file.name
+                    or "conf" in file.name
                 ) and ".go" not in file.suffix:
                     self.configs.append(
                         models.Config(
@@ -97,8 +106,21 @@ class GoAnalyzer(BaseAnalyzer):
                         )
                     )
 
-                elif "Dockerfile" in file.name:
+                if "Dockerfile" in file.name:
                     self.dockerfiles.append(str(file))
+
+                if "compose" in file.name and (
+                    file.suffix == ".yml" or file.suffix == ".yaml"
+                ):
+                    self.compose_file = str(file)
+
+                if ".env" in file.name:
+                    self.environment.append(
+                        models.Environment(
+                            name=file.name,
+                            path=str(file),
+                        )
+                    )
 
     def _parse_go_mod(self, go_mod_file: Path) -> tuple[str, list[models.Lib]]:
         go_version_pattern = re.compile(r"\d.\d*")
