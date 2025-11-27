@@ -33,9 +33,9 @@ class PythonAnalyze(BaseAnalyzer):
         has_python_files = any(
             (root / indicator).exists() for indicator in python_indicators
         )
-        has_py_files = bool(list(root.glob("**/*.py"))[:1])
+        # has_py_files = bool(list(root.glob("**/*.py"))[:1])
 
-        if not (has_python_files or has_py_files):
+        if not has_python_files:
             return None
 
         # Reset instance variables
@@ -56,6 +56,7 @@ class PythonAnalyze(BaseAnalyzer):
         py_version = self._normalize_python_version(py_version)
 
         return models.Service(
+            android=None,
             path=root,
             name=root.name,
             lang=models.Language(name="python", version=py_version),
@@ -232,6 +233,7 @@ class PythonAnalyze(BaseAnalyzer):
             ".ini",
             ".yml",
             ".yaml",
+            "requirements.txt",
             "setup.py",
             "setup.cfg",
             "pyproject.toml",
