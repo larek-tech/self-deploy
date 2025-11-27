@@ -281,34 +281,29 @@ larek init <ссылка на репозиторий>
 
 ## Использование Docker образа
 
-Ниже — краткая инструкция по использованию Docker-образа с утилитой `larek`. Примеры команд рассчитаны на zsh/bash.
-
-1) Сборка локального образа (опционально, если вы хотите собирать сами):
+Рекомендуемый способ — использовать публичный образ из GitHub Container Registry:
 
 ```bash
-# Собрать образ из Dockerfile.larek
-docker build -f Dockerfile.larek -t larek-cli:local .
+# Скачиваем последний публичный образ
+docker pull ghcr.io/larek-tech/larek:latest
+
+# Показать справку
+docker run --rm ghcr.io/larek-tech/larek:latest --help
 ```
 
-2) Запуск образа — простой пример (показывает help):
+Далее — удобные примеры запуска команд из образа (замените `ghcr.io/larek-tech/larek:latest` на нужный тег при необходимости).
 
-```bash
-docker run --rm larek-cli:local --help
-# или, если берёте образ из GHCR:
-# docker run --rm ghcr.io/larek-tech/larek:latest --help
-```
-
-3) Запуск команды `larek` с монтированием текущей директории как рабочей области:
+1) Запуск команды `larek` с монтированием текущей директории как рабочей области:
 
 ```bash
 # Монтируем текущую директорию в /workdir внутри контейнера
 docker run --rm -it \
   -v "$(pwd)":/workdir -w /workdir \
-  larek-cli:local \
+  ghcr.io/larek-tech/larek:latest \
   larek init https://github.com/user/repo.git
 ```
 
-4) Доступ к приватным репозиториям — два варианта (рекомендуется первый):
+2) Доступ к приватным репозиториям — два варианта (рекомендуется первый):
 
 - A) Forward SSH agent (рекомендуемый, безопаснее, не копирует ключи в контейнер):
 
@@ -319,61 +314,57 @@ docker run --rm -it \
   -v "$(pwd)":/workdir -w /workdir \
   -v "$SSH_AUTH_SOCK":/ssh-agent \
   -e SSH_AUTH_SOCK=/ssh-agent \
-  larek-cli:local \
+  ghcr.io/larek-tech/larek:latest \
   larek init git@github.com:user/repo.git
 ```
 
-- B) Монтирование приватного ключа (менее безопасно, простейший, если нет агентa):
+- B) Монтирование приватного ключа (менее безопасно, простейший, если нет агента):
 
 ```bash
 docker run --rm -it \
   -v "$(pwd)":/workdir -w /workdir \
   -v ~/.ssh:/root/.ssh:ro \
-  larek-cli:local \
+  ghcr.io/larek-tech/larek:latest \
   larek init git@github.com:user/repo.git
 ```
 
-5) Сохранение файлов с корректными правами: запуск контейнера от вашего UID
+3) Сохранение файлов с корректными правами: запуск контейнера от вашего UID
 
 ```bash
 docker run --rm -it \
   -u "$(id -u):$(id -g)" \
   -v "$(pwd)":/workdir -w /workdir \
-  larek-cli:local \
+  ghcr.io/larek-tech/larek:latest \
   larek docker
 ```
 
-6) Использование переменных окружения / автоматизация логина
-
-- Если нужно передать токен для входа в GitLab, можно передать его через переменную окружения и выполнить внутри контейнера команду `larek login`:
+4) Использование переменных окружения / автоматизация логина
 
 ```bash
 export GITLAB_TOKEN="<your_token>"
 docker run --rm -it \
   -v "$(pwd)":/workdir -w /workdir \
   -e GITLAB_TOKEN="$GITLAB_TOKEN" \
-  larek-cli:local \
+  ghcr.io/larek-tech/larek:latest \
   larek login --url https://gitlab.example --token "$GITLAB_TOKEN"
 ```
 
-(Если ваш проект использует другую переменную окружения для токена — используйте её; также вы можете вызвать `larek login` интерактивно внутри контейнера.)
+5) Примечание для разработчиков (опция — локальная сборка образа)
 
-7) Работа с образом в GitHub Container Registry (GHCR)
+Если вы разрабатываете `larek` и хотите собирать собственный образ локально, можно использовать `Dockerfile.larek`:
 
 ```bash
-# Присвоить тег и отправить образ в GHCR
-# 1) залогиньтесь в ghcr
-echo "$CR_PAT" | docker login ghcr.io -u "$GITHUB_USER" --password-stdin
-# 2) тег и push
-docker tag larek-cli:local ghcr.io/larek-tech/larek:latest
-docker push ghcr.io/larek-tech/larek:latest
+# Собрать локальный образ (для разработки)
+docker build -f Dockerfile.larek -t larek-cli:local .
+# Затем запускать его вместо публичного образа:
+# docker run --rm -it -v "$(pwd)":/workdir -w /workdir larek-cli:local larek --help
 ```
 
-8) Быстрые рекомендации и отладка
+6) Быстрые рекомендации и отладка
 
 - Запустите контейнер с `-it` чтобы работать интерактивно.
 - Если создаваемые файлы внутри контейнера появляются с root-владельцем, используйте `-u $(id -u):$(id -g)`.
-- Для безопасного доступа к приватным репозиториям используйте SSH agent forwarding (вариант 4A).
+- Для безопасного доступа к приватным репозиториям используйте SSH agent forwarding (вариант 2A).
 - Если контейнеру нужен доступ к Docker (например, для запуска docker внутри контейнера), используйте docker-in-docker / монтирование `-v /var/run/docker.sock:/var/run/docker.sock` с осторожностью.
 
 ---
