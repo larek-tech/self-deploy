@@ -35,7 +35,7 @@ class Config(BaseModel):
 class Language(BaseModel):
     """Информация о языке программирования."""
 
-    name: Literal["go", "python", "javascript", "typescript", "java", "kotlin"] = Field(
+    name: Literal["go", "python", "javascript", "typescript", "java", "kotlin", "android"] = Field(
         ..., description="Название языка программирования"
     )
     version: Optional[str] = Field(None, description="Версия языка")
@@ -60,6 +60,21 @@ class Docker(BaseModel):
     )
 
 
+class AndroidConfig(BaseModel):
+    """Android-специфичная конфигурация проекта."""
+
+    compile_sdk_version: Optional[str] = Field(None, description="Версия SDK для компиляции")
+    min_sdk_version: Optional[str] = Field(None, description="Минимальная версия SDK")
+    target_sdk_version: Optional[str] = Field(None, description="Целевая версия SDK")
+    application_id: Optional[str] = Field(None, description="Application ID приложения")
+    version_code: Optional[str] = Field(None, description="Version code приложения")
+    version_name: Optional[str] = Field(None, description="Version name приложения")
+    build_types: list[str] = Field(default_factory=list, description="Типы сборки (debug, release)")
+    product_flavors: list[str] = Field(default_factory=list, description="Product flavors")
+    namespace: Optional[str] = Field(None, description="Namespace приложения")
+    has_signing_config: bool = Field(False, description="Наличие конфигурации подписи")
+
+
 class Service(BaseModel):
     """Сервис в репозитории."""
 
@@ -77,6 +92,9 @@ class Service(BaseModel):
     tests: str = Field(..., description="Команда для запуска тестов")
     linters: list[Linter] = Field(
         default_factory=list, description="Настроенные линтеры"
+    )
+    android: Optional[AndroidConfig] = Field(
+        None, description="Android-специфичная конфигурация (только для Android проектов)"
     )
 
 

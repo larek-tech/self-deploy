@@ -81,7 +81,11 @@ class Composer:
             "typescript": NodeBuilder(template_dir),
         }
 
-    def get_dockerfile(self, service: Service) -> str:
+    def get_dockerfile(self, service: Service) -> str | None:
+
+        if service.lang.name == "android":
+            return None
+
         if service.docker.dockerfiles:
             with open(service.docker.dockerfiles[0], "r", encoding="utf-8") as f:
                 return f.read()

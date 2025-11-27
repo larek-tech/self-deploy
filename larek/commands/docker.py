@@ -32,6 +32,17 @@ def docker(
     for srv in config.services:
         dockerfile = composer.get_dockerfile(srv)
 
+        if dockerfile is None:
+
+            rprint(
+                f"[yellow]Skipping Dockerfile generation for {srv.name} (Android project)[/yellow]"
+            )
+            rprint(
+                "[cyan]Note:[/cyan] Use the pipeline builder to generate GitLab CI for APK builds."
+            )
+            rprint("\n")
+            continue
+
         with open(f"{srv.name}.Dockerfile", "w", encoding="utf-8") as f:
             f.write(dockerfile)
 

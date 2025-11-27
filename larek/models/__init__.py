@@ -13,4 +13,5 @@ __all__ = [
     "Docker",
     "Deployment",
     "Environment",
+    "AndroidConfig",
 ]

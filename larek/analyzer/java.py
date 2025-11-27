@@ -4,6 +4,7 @@ from larek.analyzer import BaseAnalyzer
 from larek import models
 import re
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 
 class JavaAnalyzer(BaseAnalyzer):
@@ -12,6 +13,7 @@ class JavaAnalyzer(BaseAnalyzer):
     def __init__(self) -> None:
         self.is_java_service: bool = False
         self.build_tool: str = ""  # "maven" or "gradle"
+        self.is_android: bool = False
 
         self.java_version: str = ""
         self.libs: list[models.Lib] = []
@@ -21,6 +23,8 @@ class JavaAnalyzer(BaseAnalyzer):
         self.dockerfiles: list[str] = []
         self.environment: list[models.Environment] = []
         self.linters: list[models.Linter] = []
+
+        self.android_config: Optional[models.AndroidConfig] = None
 
     def analyze(self, root: Path) -> tp.Optional[models.Service]:
         if not root.is_dir():
@@ -48,14 +52,18 @@ class JavaAnalyzer(BaseAnalyzer):
         if not self.java_version:
             self.java_version = "17"  # Default to Java 17
 
+        self._detect_android(root)
+
         self._scan(root)
 
         test_command = self._get_test_command(root)
 
+        lang_name = "android" if self.is_android else "java"
+
         return models.Service(
             path=root,
             name=root.name,
-            lang=models.Language(name="java", version=self.java_version),
+            lang=models.Language(name=lang_name, version=self.java_version),
             dependencies=models.Dependencies(
                 packet_manager=self.build_tool,
                 libs=self.libs,
@@ -69,6 +77,7 @@ class JavaAnalyzer(BaseAnalyzer):
             entrypoints=self.entrypoints,
             tests=test_command,
             linters=self.linters,
+            android=self.android_config,
         )
 
     def _parse_all_gradle_files(self, root: Path) -> tuple[str, list[models.Lib]]:
@@ -407,3 +416,207 @@ class JavaAnalyzer(BaseAnalyzer):
         if version.startswith("1."):
             return version[2:]  # "1.8" -> "8"
         return version
+
+    def _detect_android(self, root: Path) -> None:
+        """Detect if this is an Android project and extract Android-specific config."""
+
+        android_indicators = [
+            root / "app" / "build.gradle",
+            root / "app" / "build.gradle.kts",
+            root / "build.gradle",
+            root / "build.gradle.kts",
+            root / "app" / "src" / "main" / "AndroidManifest.xml",
+        ]
+
+        has_android_manifest = (
+            root / "app" / "src" / "main" / "AndroidManifest.xml"
+        ).exists()
+        has_android_manifest = has_android_manifest or any(
+            (root / "src" / "main" / "AndroidManifest.xml").exists()
+        )
+
+        gradle_files = [
+            root / "build.gradle",
+            root / "build.gradle.kts",
+            root / "app" / "build.gradle",
+            root / "app" / "build.gradle.kts",
+        ]
+
+        for gradle_file in gradle_files:
+            if gradle_file.exists():
+                try:
+                    content = gradle_file.read_text(errors="ignore")
+
+                    if (
+                        "com.android.application" in content
+                        or "com.android.library" in content
+                        or "apply plugin: 'com.android" in content
+                        or 'id("com.android.application")' in content
+                        or 'id("com.android.library")' in content
+                    ):
+                        self.is_android = True
+                        self.android_config = self._parse_android_config(
+                            root, gradle_file
+                        )
+                        break
+                except Exception:
+                    pass
+
+        if has_android_manifest and not self.is_android:
+            self.is_android = True
+
+            app_gradle = root / "app" / "build.gradle"
+            if not app_gradle.exists():
+                app_gradle = root / "app" / "build.gradle.kts"
+            if app_gradle.exists():
+                self.android_config = self._parse_android_config(root, app_gradle)
+            else:
+
+                self.android_config = models.AndroidConfig()
+
+    def _parse_android_config(
+        self, root: Path, gradle_file: Path
+    ) -> models.AndroidConfig:
+        """Parse Android-specific configuration from build.gradle."""
+        compile_sdk = None
+        min_sdk = None
+        target_sdk = None
+        application_id = None
+        version_code = None
+        version_name = None
+        build_types: list[str] = []
+        product_flavors: list[str] = []
+        namespace = None
+        has_signing = False
+
+        try:
+            content = gradle_file.read_text(errors="ignore")
+
+            variables = self._extract_variables(gradle_file)
+
+            compile_patterns = [
+                r"compileSdkVersion\s+(\d+)",
+                r"compileSdk\s+(\d+)",
+                r"compileSdkVersion\s+['\"](\d+)['\"]",
+            ]
+            for pattern in compile_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    compile_sdk = match.group(1)
+                    break
+
+            # Parse minSdkVersion
+            min_patterns = [
+                r"minSdkVersion\s+(\d+)",
+                r"minSdk\s+(\d+)",
+                r"minSdkVersion\s+['\"](\d+)['\"]",
+            ]
+            for pattern in min_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    min_sdk = match.group(1)
+                    break
+
+            # Parse targetSdkVersion
+            target_patterns = [
+                r"targetSdkVersion\s+(\d+)",
+                r"targetSdk\s+(\d+)",
+                r"targetSdkVersion\s+['\"](\d+)['\"]",
+            ]
+            for pattern in target_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    target_sdk = match.group(1)
+                    break
+
+            # Parse applicationId
+            app_id_patterns = [
+                r"applicationId\s+['\"]([^'\"]+)['\"]",
+                r"applicationId\s+([\w.]+)",
+            ]
+            for pattern in app_id_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    application_id = match.group(1)
+                    break
+
+            # Parse versionCode
+            version_code_patterns = [
+                r"versionCode\s+(\d+)",
+                r"versionCode\s+['\"](\d+)['\"]",
+            ]
+            for pattern in version_code_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    version_code = match.group(1)
+                    break
+
+            # Parse versionName
+            version_name_patterns = [
+                r"versionName\s+['\"]([^'\"]+)['\"]",
+                r"versionName\s+([\w.]+)",
+            ]
+            for pattern in version_name_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    version_name = match.group(1)
+                    break
+
+            build_type_match = re.search(
+                r"buildTypes\s*\{([^}]+)\}", content, re.DOTALL
+            )
+            if build_type_match:
+                build_types_content = build_type_match.group(1)
+
+                if "release" in build_types_content:
+                    build_types.append("release")
+                if "debug" in build_types_content:
+                    build_types.append("debug")
+
+            flavor_match = re.search(
+                r"productFlavors\s*\{([^}]+)\}", content, re.DOTALL
+            )
+            if flavor_match:
+                flavors_content = flavor_match.group(1)
+
+                flavor_pattern = r"(\w+)\s*\{"
+                for match in re.finditer(flavor_pattern, flavors_content):
+                    flavor_name = match.group(1)
+                    if flavor_name not in ("dimension", "applicationIdSuffix"):
+                        product_flavors.append(flavor_name)
+
+            namespace_patterns = [
+                r"namespace\s+['\"]([^'\"]+)['\"]",
+                r"namespace\s+([\w.]+)",
+            ]
+            for pattern in namespace_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    namespace = match.group(1)
+                    break
+
+            has_signing = (
+                "signingConfig" in content
+                or "signingConfigs" in content
+                or "storeFile" in content
+                or "storePassword" in content
+            )
+
+        except Exception:
+            pass
+
+        if not build_types:
+            build_types = ["debug", "release"]
+
+        return models.AndroidConfig(
+            compile_sdk_version=compile_sdk,
+            min_sdk_version=min_sdk,
+            target_sdk_version=target_sdk,
+            application_id=application_id,
+            version_code=version_code,
+            version_name=version_name,
+            build_types=build_types,
+            product_flavors=product_flavors,
+            namespace=namespace,
+            has_signing_config=has_signing,
+        )
