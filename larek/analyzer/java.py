@@ -431,8 +431,9 @@ class JavaAnalyzer(BaseAnalyzer):
         has_android_manifest = (
             root / "app" / "src" / "main" / "AndroidManifest.xml"
         ).exists()
-        has_android_manifest = has_android_manifest or any(
-            (root / "src" / "main" / "AndroidManifest.xml").exists()
+        has_android_manifest = (
+            has_android_manifest
+            or (root / "src" / "main" / "AndroidManifest.xml").exists()
         )
 
         gradle_files = [

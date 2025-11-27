@@ -9,6 +9,7 @@ import string
 
 
 import pydantic_yaml
+import yaml
 
 import typer
 from rich.console import Console
@@ -26,6 +27,21 @@ from larek.utils.gitlab_auth import get_authenticated_client
 
 app = typer.Typer(help="Инициализация нового проекта")
 console = Console()
+
+
+def write_yaml_file(path: pathlib.Path, model) -> None:
+    """Write pydantic model to YAML file with wide line width to prevent wrapping."""
+    yaml_str = pydantic_yaml.to_yaml_str(model)
+    data = yaml.safe_load(yaml_str)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            data,
+            f,
+            default_flow_style=False,
+            width=10000,
+            allow_unicode=True,
+            sort_keys=False,
+        )
 
 
 def clone_step(repo_path: str, branch: str) -> str:
@@ -79,7 +95,7 @@ def analyze(repo_path_raw: str):
 
     build_path = pathlib.Path(".larek/build.yaml")
     os.makedirs(build_path.parent, exist_ok=True)
-    pydantic_yaml.to_yaml_file(build_path, repo_schema)
+    write_yaml_file(build_path, repo_schema)
 
 
 def docker(repo_path_raw: str):

@@ -1,6 +1,7 @@
 import typer
 import pathlib
 import pydantic_yaml
+import yaml
 import os
 import pathlib
 from rich.console import Console
@@ -9,6 +10,31 @@ from larek.analyzer import repo, go, java, kotlin, javascript, python
 
 app = typer.Typer(help="Дебаг анализа репозитория")
 console = Console()
+
+
+def write_yaml_file(path: pathlib.Path, model) -> None:
+    """Write pydantic model to YAML file with wide line width to prevent wrapping."""
+    yaml_str = pydantic_yaml.to_yaml_str(model)
+    # Re-dump with wider line width
+    data = yaml.safe_load(yaml_str)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            data,
+            f,
+            default_flow_style=False,
+            width=10000,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+
+def to_yaml_str_wide(model) -> str:
+    """Convert pydantic model to YAML string with wide line width."""
+    yaml_str = pydantic_yaml.to_yaml_str(model)
+    data = yaml.safe_load(yaml_str)
+    return yaml.dump(
+        data, default_flow_style=False, width=10000, allow_unicode=True, sort_keys=False
+    )
 
 
 @app.callback(invoke_without_command=True)
@@ -46,9 +72,8 @@ def debug(
     repo_schema = repo_analyzer.analyze(repo_path)
 
     build_path = pathlib.Path(".larek/build.yaml")
-    os.makedirs(build_path.parent, exist_ok=True)
-    pydantic_yaml.to_yaml_file(build_path, repo_schema)
 
-    console.print(
-        f"[green]Результат анализа репозитория записан в файл .larek/build.yaml.[/green]"
-    )
+    console.print(f"[blue]Запись результата в файл:[/blue] {build_path}")
+    os.makedirs(build_path.parent, exist_ok=True)
+    write_yaml_file(build_path, repo_schema)
+    print(to_yaml_str_wide(repo_schema))

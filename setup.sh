@@ -200,7 +200,18 @@ if [ -n "$RUNNER_TOKEN" ]; then
     --tag-list "docker,ci,staging" \
     --run-untagged="true" \
     --locked="false" \
-    --access-level="not_protected"
+    --access-level="not_protected" \
+    --docker-network-mode "larek-cli_gitlab-network" \
+    --clone-url "http://gitlab_server"
+  
+  echo "Updating runner config for proper network resolution..."
+  # Ensure CI job containers can resolve gitlab_server via the Docker network
+  docker exec gitlab_runner sh -c '
+    if ! grep -q "extra_hosts" /etc/gitlab-runner/config.toml; then
+      sed -i "/\[runners.docker\]/a\    extra_hosts = [\"gitlab_server:host-gateway\"]" /etc/gitlab-runner/config.toml
+    fi
+  '
+  docker restart gitlab_runner
 else
   echo "Failed to get runner token."
 fi

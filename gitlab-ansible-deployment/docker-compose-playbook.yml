@@ -271,6 +271,15 @@
                 puts "NEXUS_REGISTRY variable already exists."
               end
 
+              # NEXUS_REGISTRY_EXTERNAL for Docker-in-Docker access (uses host IP)
+              nexus_registry_ext = root_group.variables.find_by(key: 'NEXUS_REGISTRY_EXTERNAL')
+              if nexus_registry_ext.nil?
+                root_group.variables.create!(key: 'NEXUS_REGISTRY_EXTERNAL', value: '{{ ansible_default_ipv4.address }}:{{ nexus_docker_port }}', protected: false, masked: false)
+                puts "Added NEXUS_REGISTRY_EXTERNAL variable."
+              else
+                puts "NEXUS_REGISTRY_EXTERNAL variable already exists."
+              end
+
               nexus_user = root_group.variables.find_by(key: 'NEXUS_USER')
               if nexus_user.nil?
                 root_group.variables.create!(key: 'NEXUS_USER', value: 'admin', protected: false, masked: false)
@@ -292,6 +301,7 @@
             puts "Adding instance-level CI/CD variables..."
             [
               { key: 'NEXUS_REGISTRY', value: 'nexus:{{ nexus_docker_port }}', protected: false, masked: false },
+              { key: 'NEXUS_REGISTRY_EXTERNAL', value: '{{ ansible_default_ipv4.address }}:{{ nexus_docker_port }}', protected: false, masked: false },
               { key: 'NEXUS_USER', value: 'admin', protected: false, masked: false },
               { key: 'NEXUS_PASSWORD', value: '{{ nexus_admin_password }}', protected: false, masked: true }
             ].each do |var|
@@ -520,6 +530,32 @@
         --run-untagged="true"
         --locked="false"
         --access-level="not_protected"
+        --docker-network-mode "{{ project_name }}_gitlab-network"
+        --clone-url "http://gitlab_server"
+      when: runner_token is defined
+
+    # ===== CONFIGURE RUNNER CONFIG FOR NETWORK =====
+    - name: Update runner config with network settings
+      shell: |
+        docker exec gitlab_runner sh -c 'cat /etc/gitlab-runner/config.toml'
+      register: runner_config_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Ensure runner uses correct network (remove extra_hosts, rely on Docker DNS)
+      shell: |
+        docker exec gitlab_runner sh -c '
+        # Remove extra_hosts if present (Docker network DNS is sufficient)
+        sed -i "/extra_hosts/d" /etc/gitlab-runner/config.toml
+        # Add network_mode if not present
+        if ! grep -q "network_mode" /etc/gitlab-runner/config.toml; then
+          sed -i "/\[runners.docker\]/a\    network_mode = \"{{ project_name }}_gitlab-network\"" /etc/gitlab-runner/config.toml
+        fi
+        '
+      when: runner_token is defined
+
+    - name: Restart gitlab-runner to apply config
+      command: docker restart gitlab_runner
       when: runner_token is defined
 
     # ===== CONFIGURE NEXUS =====
