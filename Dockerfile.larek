@@ -1,0 +1,55 @@
+# Multi-stage Dockerfile for larek CLI
+# Stage 1: build wheel
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install minimal build deps
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       ca-certificates \
+       git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python build tooling
+RUN pip install --no-cache-dir build
+
+# Copy project files and build wheel
+COPY pyproject.toml poetry.lock ./
+COPY larek ./larek
+COPY setup.sh ./setup.sh
+COPY readme.md ./readme.md
+COPY requirements-docs.txt ./requirements-docs.txt
+COPY mkdocs.yml ./mkdocs.yml
+COPY scripts ./scripts
+
+# Build wheel into /dist
+RUN python -m build -w -o /dist
+
+#########################
+# Stage 2: runtime image
+#########################
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy wheel from builder and install
+COPY --from=builder /dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl
+
+# Default entrypoint: run the package as a module (requires __main__ or package cli)
+# larek provides a Typer app; prefer invoking module to show help
+ENTRYPOINT ["python", "-m", "larek"]
+CMD ["--help"]
+
