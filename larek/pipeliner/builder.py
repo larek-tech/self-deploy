@@ -2,10 +2,55 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import re
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
 from larek.models.repo import Service, Deployment, RepoSchema
+
+
+def _strip_leading_repo_component(path_str: str, service) -> str:
+    if not path_str:
+        return "."
+    wildcard = ""
+    if path_str.endswith("/..."):
+        path_base = path_str[:-4]
+        wildcard = "/..."
+    else:
+        path_base = path_str
+    p = Path(path_base)
+
+    if p.is_absolute():
+        return str(p) + wildcard
+    parts = [part for part in p.parts if part and part != "."]
+
+    svc_first = None
+    try:
+        if getattr(service, "path", None):
+            svc_first = str(service.path).split(os.path.sep)[0]
+    except Exception:
+        svc_first = None
+    if svc_first and parts and parts[0] == svc_first:
+        parts = parts[1:]
+    result = os.path.join(*parts) if parts else "."
+    return result + wildcard
+
+
+def _repo_relative(path_str: str, service) -> str:
+    if not path_str:
+        return "./"
+    if any(tok in path_str for tok in (" ", "&&", "|")):
+        return path_str
+    normalized = _strip_leading_repo_component(path_str, service)
+    p = Path(normalized)
+    if p.is_absolute():
+        return str(p)
+    s = normalized
+    if s in (".", "./", ""):
+        return "./"
+    if not s.startswith(".") and not s.startswith("/"):
+        s = "./" + s
+    return s
 
 
 class PipelineBuilder(ABC):
@@ -33,12 +78,6 @@ class PipelineBuilder(ABC):
     def get_stages(
         self, service: Optional[Service] = None, deployment: Optional[Deployment] = None
     ) -> List[str]:
-        """Return list of pipeline stages.
-
-        If `service` is provided, uses the Service model to decide whether
-        to include `lint` and `test` stages and whether `docker` should be
-        present. If `service` is None, returns the default stages.
-        """
 
         default = ["lint", "test", "build"]
         if service is None and deployment is None:
@@ -148,9 +187,9 @@ class GoPipelineBuilder(PipelineBuilder):
             "lint_command": "golangci-lint run ./...",
             "test_command": service.tests or "go test ./...",
             "build_commands": (
-                [f"go build -o bin/{service.name} {ep}" for ep in service.entrypoints]
+                [f"go build -o bin/{service.name} {_repo_relative(ep, service)}" for ep in service.entrypoints]
                 if service.entrypoints
-                else [f"go build -o bin/{service.name} ./..."]
+                else [f"go build -o bin/{service.name} {_repo_relative(str(service.path) + '/...', service)}"]
             ),
             **self.get_docker_context(service),
         }
@@ -161,6 +200,26 @@ class GoPipelineBuilder(PipelineBuilder):
     ) -> Dict[str, Any]:
         go_version = service.lang.version or "1.21"
         stages = self.get_stages(service, deployment)
+
+        def _service_relative(pth: str) -> str:
+            if not pth:
+                return "./"
+            wildcard = ""
+            if pth.endswith("/..."):
+                wildcard = "/..."
+                pth = pth[:-4]
+            p = Path(pth)
+            if p.is_absolute():
+                return str(p) + wildcard
+            parts = [pp for pp in p.parts if pp and pp != "."]
+            svc_parts = [pp for pp in Path(str(service.path)).parts if pp and pp != "."]
+            if svc_parts and parts[: len(svc_parts)] == svc_parts:
+                parts = parts[len(svc_parts) :]
+            res = os.path.join(*parts) if parts else "."
+            if not res.startswith(".") and not res.startswith("/"):
+                res = "./" + res
+            return res + wildcard
+
         return {
             "service": service,
             "stages": stages,
@@ -175,7 +234,7 @@ class GoPipelineBuilder(PipelineBuilder):
             "lint_command": "golangci-lint run ./...",
             "test_command": service.tests or "go test ./...",
             "build_commands": (
-                [f"go build -o bin/{service.name} {ep}" for ep in service.entrypoints]
+                [f"go build -o bin/{service.name} {_service_relative(ep)}" for ep in service.entrypoints]
                 if service.entrypoints
                 else [f"go build -o bin/{service.name} ./..."]
             ),
@@ -197,20 +256,21 @@ class PythonPipelineBuilder(PipelineBuilder):
         has_lint = len(service.linters) > 0
         has_test = bool(service.tests)
 
+        svc_dir = _repo_relative(str(service.path), service)
+        prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+
         if package_manager == "poetry":
-            install_cmd = "poetry install"
-            lint_cmd = "poetry run ruff check . && poetry run mypy ."
-            format_cmd = (
-                "poetry run ruff format --check . && poetry run black --check ."
-            )
+            install_cmd = prefix + "poetry install"
+            lint_cmd = prefix + "poetry run ruff check . && poetry run mypy ."
+            format_cmd = prefix + "poetry run ruff format --check . && poetry run black --check ."
             test_cmd = (
-                f"poetry run {service.tests}" if service.tests else "poetry run pytest"
+                prefix + (f"poetry run {service.tests}" if service.tests else "poetry run pytest")
             )
         else:  # pip
-            install_cmd = "pip install -r requirements.txt"
-            lint_cmd = "ruff check . && mypy ."
-            format_cmd = "ruff format --check . && black --check ."
-            test_cmd = service.tests or "pytest"
+            install_cmd = prefix + "pip install -r requirements.txt"
+            lint_cmd = prefix + "ruff check . && mypy ."
+            format_cmd = prefix + "ruff format --check . && black --check ."
+            test_cmd = prefix + (service.tests or "pytest")
         stages = self.get_stages(service, deployment)
         context = {
             "service": service,
@@ -239,9 +299,7 @@ class PythonPipelineBuilder(PipelineBuilder):
 - poetry config virtualenvs.in-project true
 - poetry install"""
             lint_cmd = "poetry run ruff check . && poetry run mypy ."
-            test_cmd = (
-                f"poetry run {service.tests}" if service.tests else "poetry run pytest"
-            )
+            test_cmd = f"poetry run {service.tests}" if service.tests else "poetry run pytest"
         else:
             before_script = """- pip install ruff mypy pytest
 - pip install -r requirements.txt"""
@@ -271,11 +329,7 @@ class PythonPipelineBuilder(PipelineBuilder):
     def get_stages(
         self, service: Optional[Service] = None, deployment: Optional[Deployment] = None
     ) -> List[str]:
-        """Return list of pipeline stages for Python projects.
 
-        Always includes lint stage (lint and format run in parallel in this stage).
-        Includes test if tests are detected. Includes docker stage if dockerfiles are present.
-        """
         stages: List[str] = []
 
         stages.append("lint")
@@ -314,12 +368,29 @@ class NodePipelineBuilder(PipelineBuilder):
         has_dockerfiles = len(service.docker.dockerfiles) > 0
 
         has_lint = len(service.linters) > 0
-        # Don't count placeholder "no tests" message as having tests
+
         has_test = bool(service.tests) and "echo" not in service.tests.lower()
 
-        # Detect S3/MinIO/AWS credentials from deployment.environment (list[Environment]).
-        # Look for common MinIO and AWS env var names (case-insensitive),
-        # with a fallback to generic "access"/"secret"/"bucket" substrings.
+        svc_dir = _repo_relative(str(service.path), service)
+        prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+
+        if package_manager == "yarn":
+            install_cmd = prefix + "yarn install --frozen-lockfile"
+            lint_cmd = prefix + "yarn lint"
+            test_cmd = prefix + "yarn test"
+            build_cmd = prefix + "yarn build"
+        elif package_manager == "pnpm":
+            install_cmd = prefix + "pnpm install --no-frozen-lockfile"
+            lint_cmd = prefix + "pnpm lint"
+            test_cmd = prefix + "pnpm test"
+            build_cmd = prefix + "pnpm build"
+        else:  # npm
+            install_cmd = prefix + "npm install --prefer-offline --no-audit"
+            lint_cmd = prefix + "npm run lint"
+            test_cmd = prefix + "npm test"
+            build_cmd = prefix + "npm run build"
+
+
         has_s3 = False
         s3_details: Dict[str, Any] = {}
         if deployment and getattr(deployment, "environment", None):
@@ -366,23 +437,6 @@ class NodePipelineBuilder(PipelineBuilder):
             if has_access and has_secret:
                 has_s3 = True
                 s3_details = {"env_names": env_names, "has_bucket": has_bucket}
-
-        # Determine commands based on package manager
-        if package_manager == "yarn":
-            install_cmd = "yarn install --frozen-lockfile"
-            lint_cmd = "yarn lint"
-            test_cmd = "yarn test"
-            build_cmd = "yarn build"
-        elif package_manager == "pnpm":
-            install_cmd = "pnpm install --no-frozen-lockfile"
-            lint_cmd = "pnpm lint"
-            test_cmd = "pnpm test"
-            build_cmd = "pnpm build"
-        else:  # npm
-            install_cmd = "npm install --prefer-offline --no-audit"
-            lint_cmd = "npm run lint"
-            test_cmd = "npm test"
-            build_cmd = "npm run build"
 
         stages = self.get_stages(service, deployment)
 
@@ -542,14 +596,17 @@ class JavaPipelineBuilder(PipelineBuilder):
         has_lint = len(service.linters) > 0
         has_test = bool(service.tests)
 
+        svc_dir = _repo_relative(str(service.path), service)
+        prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+
         if "gradle" in package_manager.lower():
-            build_cmd = "./gradlew build"
-            test_cmd = "./gradlew test"
-            lint_cmd = "./gradlew checkstyleMain"
+            build_cmd = prefix + "./gradlew build"
+            test_cmd = prefix + "./gradlew test"
+            lint_cmd = prefix + "./gradlew checkstyleMain"
         else:  # maven
-            build_cmd = "mvn package -DskipTests"
-            test_cmd = "mvn test"
-            lint_cmd = "mvn checkstyle:check"
+            build_cmd = prefix + "mvn package -DskipTests"
+            test_cmd = prefix + "mvn test"
+            lint_cmd = prefix + "mvn checkstyle:check"
 
         context = {
             "service": service,
@@ -627,18 +684,20 @@ class KotlinPipelineBuilder(PipelineBuilder):
         self, service: Service, deployment: Optional[Deployment] = None
     ) -> str:
         package_manager = service.dependencies.packet_manager
-        has_dockerfiles = len(service.docker.dockerfiles) > 0
         has_lint = len(service.linters) > 0
         has_test = bool(service.tests)
 
+        svc_dir = _repo_relative(str(service.path), service)
+        prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+
         if "maven" in package_manager.lower():
-            build_cmd = "mvn package -DskipTests"
-            test_cmd = "mvn test"
-            lint_cmd = "mvn detekt:check"
+            build_cmd = prefix + "mvn package -DskipTests"
+            test_cmd = prefix + "mvn test"
+            lint_cmd = prefix + "mvn detekt:check"
         else:
-            build_cmd = "./gradlew build"
-            test_cmd = "./gradlew test"
-            lint_cmd = "./gradlew detekt"
+            build_cmd = prefix + "./gradlew build"
+            test_cmd = prefix + "./gradlew test"
+            lint_cmd = prefix + "./gradlew detekt"
 
         context = {
             "service": service,
@@ -719,23 +778,23 @@ class AndroidPipelineBuilder(PipelineBuilder):
             for build_type in android.build_types:
                 build_variants.append(build_type.capitalize())
 
-        # Build commands for each variant
+
         build_commands = []
         for variant in build_variants:
             if package_manager == "gradle":
-                # Use gradlew if available, otherwise gradle
-                # Check if gradlew exists in service path
                 gradlew_path = service.path / "gradlew"
                 gradle_cmd = "./gradlew" if gradlew_path.exists() else "gradle"
-                build_commands.append(f"{gradle_cmd} assemble{variant}")
+                svc_dir = _repo_relative(str(service.path), service)
+                prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+                build_commands.append(f"{prefix}{gradle_cmd} assemble{variant}")
 
-        # Determine lint command
         if package_manager == "gradle":
-            # Check if gradlew exists in service path
             gradlew_path = service.path / "gradlew"
             gradle_cmd = "./gradlew" if gradlew_path.exists() else "gradle"
-            lint_cmd = f"{gradle_cmd} lint"
-            test_cmd = service.tests or f"{gradle_cmd} test"
+            svc_dir = _repo_relative(str(service.path), service)
+            prefix = f"cd {svc_dir} && " if svc_dir not in ("./", "./.") and not svc_dir.startswith("/") else ""
+            lint_cmd = f"{prefix}{gradle_cmd} lint"
+            test_cmd = service.tests or f"{prefix}{gradle_cmd} test"
         else:
             lint_cmd = "mvn checkstyle:check"
             test_cmd = service.tests or "mvn test"
@@ -762,21 +821,16 @@ class AndroidPipelineBuilder(PipelineBuilder):
     def get_service_config(
         self, service: Service, deployment: Optional[Deployment] = None
     ) -> Dict[str, Any]:
-        """Get Android service configuration for monorepo pipeline."""
         if not service.android:
-            # Fallback to Java config if not Android
             return super().get_service_config(service, deployment)
 
-        java_version = service.lang.version or "17"
         android = service.android
-        package_manager = service.dependencies.packet_manager
         stages = self.get_stages(service, deployment)
         has_test = bool(service.tests) and "echo" not in service.tests.lower()
 
         gradlew_path = service.path / "gradlew"
         gradle_cmd = "./gradlew" if gradlew_path.exists() else "gradle"
 
-        # Build variants
         build_variants = []
         if android.product_flavors:
             for flavor in android.product_flavors:
@@ -810,33 +864,10 @@ class AndroidPipelineBuilder(PipelineBuilder):
             "artifacts_path": "app/build/outputs/apk/",
         }
 
-    def get_stages(
-        self, service: Optional[Service] = None, deployment: Optional[Deployment] = None
-    ) -> List[str]:
-        """Return list of pipeline stages for Android projects."""
-        stages: List[str] = []
-
-        if service and service.linters:
-            stages.append("lint")
-
-        if service and service.tests and "echo" not in service.tests.lower():
-            stages.append("test")
-
-        stages.append("build")
-
-        if service and service.android and service.android.has_signing_config:
-            stages.append("sign")
-
-        extra = self.extra_stages(service, deployment)
-        for st in extra:
-            if st not in stages:
-                stages.append(st)
-
-        return stages
 
 
 class PipelineComposer:
-    """Composer for generating GitLab CI pipelines with Docker build and push support."""
+    """Composer for generating GitLab CI pipelines"""
 
     def __init__(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -864,33 +895,17 @@ class PipelineComposer:
     def generate_from_schema(
         self, schema: RepoSchema, deployment: Optional[Deployment] = None
     ) -> str:
-        """Generate GitLab CI pipeline from RepoSchema.
-
-        If the schema has only one service, generates a single-service pipeline.
-        If the schema has multiple services (monorepo), generates a combined
-        pipeline with per-service jobs and change-based rules.
-
-        Args:
-            schema: The RepoSchema containing services to generate pipelines for.
-            deployment: Optional deployment configuration.
-
-        Returns:
-            The generated GitLab CI YAML content as a string.
-        """
         if not schema.services:
             raise ValueError("No services found in schema")
 
-        # Single service - use existing template
         if len(schema.services) == 1:
             return self.get_pipeline(schema.services[0])
 
-        # Multiple services - generate monorepo pipeline
         return self.get_multi_service_pipeline(
             schema.services, deployment or schema.deployment
         )
 
     def _convert_leading_underscore_keys_to_dot(self, yaml_str: str) -> str:
-
         return re.sub(r"(?m)^_([A-Za-z0-9_-]+)(\s*:)", r".\1\2", yaml_str)
 
     def get_multi_service_pipeline(
@@ -900,7 +915,6 @@ class PipelineComposer:
         all_stages: List[str] = []
         service_configs: List[Dict[str, Any]] = []
 
-        # Define stage order
         stage_order = ["lint", "test", "build", "docker", "sign", "deploy", "s3"]
 
         for service in services:
@@ -909,7 +923,6 @@ class PipelineComposer:
                 continue
 
             config = builder.get_service_config(service, deployment)
-            # Normalize dockerfile paths into dicts with explicit context
             raw_dfs = config.get("dockerfiles", []) or []
             normalized = []
             for df in raw_dfs:
@@ -934,7 +947,6 @@ class PipelineComposer:
             config["has_docker"] = len(normalized) > 0
             service_configs.append(config)
 
-        # If all services share the same top-level repo folder, strip that prefix...
         common_prefix = None
         try:
             first_parts = [
@@ -971,13 +983,11 @@ class PipelineComposer:
                     adjusted.append({"dockerfile": df_path_adj, "context": ctx_adj})
                 cfg["dockerfiles"] = adjusted
 
-        # Collect stages from each service config (deduplicated)
         for cfg in service_configs:
             for st in cfg.get("stages", []):
                 if st not in all_stages:
                     all_stages.append(st)
 
-        # Sort stages according to predefined order
         all_stages = sorted(
             all_stages,
             key=lambda s: (stage_order.index(s) if s in stage_order else len(stage_order)),
@@ -986,7 +996,6 @@ class PipelineComposer:
         if not service_configs:
             raise ValueError("No valid services found for pipeline generation")
 
-        # Render the monorepo template
         template = self.env.get_template("monorepo.gitlab-ci.yml.j2")
         rendered = template.render(
             services=services,
@@ -995,8 +1004,6 @@ class PipelineComposer:
             deployment=deployment,
         )
 
-        # Post-process rendered YAML to convert top-level underscore-prefixed keys
-        # (e.g. `_frontend-changes:`) into GitLab hidden templates (`.frontend-changes:`)
         rendered = self._convert_leading_underscore_keys_to_dot(rendered)
         return rendered
 
