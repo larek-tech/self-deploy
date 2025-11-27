@@ -61,8 +61,6 @@ services:
     environment:
       - GITLAB_URL=${GITLAB_URL:-http://gitlab_server}
 
-  # TODO: add sonar
-
 networks:
   gitlab-network:
     driver: bridge
@@ -78,9 +76,3 @@ volumes:
     driver: local
   gitlab_runner_config:
     driver: local
-#docker compose exec gitlab-runner gitlab-runner register --url http://gitlab_server --token YOUR_RUNNER_AUTHENTICATION_TOKEN --executor docker --description "Docker Runner" --docker-image "alpine:latest" --tag-list "docker,ci,staging" --run-untagged="true" --locked="false"
-
-# curl --request POST --header "PRIVATE-TOKEN: <your_access_token>" \
-#--data "runner_type=instance_type&description=My%20API%20Runner&tag_list=api,shell" \
-# "your-gitlab-instance.com"
-

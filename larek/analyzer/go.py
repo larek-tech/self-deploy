@@ -34,6 +34,7 @@ class GoAnalyzer(BaseAnalyzer):
         self._scan(root)
 
         return models.Service(
+            android=None,
             path=root,
             name=root.name,
             lang=models.Language(name="go", version=self.go_version),
