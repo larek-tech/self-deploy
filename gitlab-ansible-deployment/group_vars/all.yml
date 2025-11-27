@@ -1,0 +1,13 @@
+---
+# Global GitLab Configuration
+gitlab_edition: "gitlab-ce"  # or "gitlab-ee"
+#gitlab_domain: "gitlab.yourdomain.com"  # Change this!
+gitlab_use_ssl: false  # Simple HTTP setup
+gitlab_backup_retention_days: 7
+#gitlab_ssl_self_signed: true
+
+# Resource limits (adjust based on VM specs)
+gitlab_puma_workers: 2
+gitlab_sidekiq_concurrency: 25
+gitlab_postgresql_shared_buffers: "256MB"
+gitlab_postgresql_effective_cache_size: "1GB"

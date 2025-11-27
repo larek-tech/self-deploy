@@ -1,0 +1,563 @@
+---
+- name: Deploy GitLab, Nexus, and GitLab Runner via Docker Compose
+  hosts: gitlab_servers
+  become: yes
+  vars:
+    # Project settings
+    project_name: "larek-cli"
+    deploy_path: "/opt/larek-deploy"
+
+    # GitLab settings
+    gitlab_root_password: "SuperSecurePassword123"
+    gitlab_external_url: "http://{{ ansible_default_ipv4.address }}"
+    gitlab_email_from: "admin@larek.tech"
+    gitlab_http_port: 80
+    gitlab_https_port: 443
+    gitlab_ssh_port: 2222
+
+    # Nexus settings
+    nexus_http_port: 8081
+    nexus_docker_port: 8082
+    nexus_admin_password: "admin123"
+
+  tasks:
+    # ===== SYSTEM PREPARATION =====
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages
+      package:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - python3-docker
+        state: present
+
+    # ===== DOCKER INSTALLATION =====
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: docker_check.rc != 0 and ansible_os_family == "Debian"
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+      when: docker_check.rc != 0 and ansible_os_family == "Debian"
+
+    - name: Install Docker
+      package:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      when: docker_check.rc != 0
+
+    - name: Ensure Docker service is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    # ===== PROJECT DIRECTORY SETUP =====
+    - name: Create deployment directory
+      file:
+        path: "{{ deploy_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create scripts directory
+      file:
+        path: "{{ deploy_path }}/scripts"
+        state: directory
+        mode: "0755"
+
+    # ===== DOCKER COMPOSE FILE =====
+    - name: Deploy docker-compose.yaml
+      copy:
+        dest: "{{ deploy_path }}/docker-compose.yaml"
+        mode: "0644"
+        content: |
+          name: {{ project_name }}
+
+          services:
+            gitlab:
+              image: "gitlab/gitlab-ce:latest"
+              container_name: gitlab_server
+              restart: always
+              environment:
+                GITLAB_ROOT_PASSWORD: "{{ gitlab_root_password }}"
+                GITLAB_OMNIBUS_CONFIG: |
+                  external_url '{{ gitlab_external_url }}';
+                  gitlab_rails['gitlab_email_from'] = '{{ gitlab_email_from }}';
+              ports:
+                - "{{ gitlab_http_port }}:80"
+                - "{{ gitlab_https_port }}:443"
+                - "{{ gitlab_ssh_port }}:22"
+              volumes:
+                - gitlab_config:/etc/gitlab
+                - gitlab_logs:/var/log/gitlab
+                - gitlab_data:/var/opt/gitlab
+              networks:
+                - gitlab-network
+              shm_size: "256m"
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost/-/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 5
+                start_period: 5m
+
+            nexus:
+              image: sonatype/nexus3:3.86.2
+              container_name: nexus
+              restart: always
+              ports:
+                - "{{ nexus_http_port }}:8081"
+                - "{{ nexus_docker_port }}:8082"
+              volumes:
+                - nexus_data:/nexus-data
+              networks:
+                - gitlab-network
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:8081/service/rest/v1/status"]
+                interval: 30s
+                timeout: 10s
+                retries: 5
+                start_period: 2m
+
+            gitlab-runner:
+              image: "gitlab/gitlab-runner:alpine"
+              container_name: gitlab_runner
+              restart: always
+              depends_on:
+                gitlab:
+                  condition: service_healthy
+              volumes:
+                - gitlab_runner_config:/etc/gitlab-runner
+                - "/var/run/docker.sock:/var/run/docker.sock"
+              networks:
+                - gitlab-network
+              environment:
+                - GITLAB_URL=http://gitlab_server
+
+          networks:
+            gitlab-network:
+              driver: bridge
+
+          volumes:
+            gitlab_config:
+              driver: local
+            gitlab_logs:
+              driver: local
+            gitlab_data:
+              driver: local
+            nexus_data:
+              driver: local
+            gitlab_runner_config:
+              driver: local
+
+    # ===== GITLAB CONFIGURATION SCRIPT =====
+    - name: Deploy GitLab configuration script
+      copy:
+        dest: "{{ deploy_path }}/scripts/configure_gitlab.rb"
+        mode: "0644"
+        content: |
+          begin
+            # Fix root account
+            u = User.find_by(username: 'root')
+            if u.nil?
+              puts "Creating root user..."
+              params = { name: "Administrator", username: "root", email: "{{ gitlab_email_from }}", password: "{{ gitlab_root_password }}", password_confirmation: "{{ gitlab_root_password }}", admin: true, skip_confirmation: true }
+              u = Users::CreateService.new(nil, params).execute
+              if u.persisted?
+                puts "Root user created."
+              else
+                puts "Failed to create root user: #{u.errors.full_messages.join(', ')}"
+              end
+            else
+              u.password = '{{ gitlab_root_password }}'
+              u.password_confirmation = '{{ gitlab_root_password }}'
+              u.save!
+              puts "Root password reset."
+            end
+
+            # Create Initial Project
+            admin_user = User.find_by(username: 'root')
+            project = Project.find_by(path: 'demo-project')
+            if project.nil?
+              puts "Creating demo-project..."
+              params = {
+                name: 'Demo Project',
+                path: 'demo-project',
+                visibility_level: 0,
+                initialize_with_readme: true
+              }
+              project = Projects::CreateService.new(admin_user, params).execute
+              if project.persisted?
+                puts "Project 'demo-project' created."
+                protected_branch = project.protected_branches.find_by(name: 'main')
+                if protected_branch
+                  protected_branch.destroy
+                  puts "Removed protection from main branch."
+                end
+              else
+                puts "Failed to create project: #{project.errors.full_messages.join(', ')}"
+              end
+            else
+              puts "Project 'demo-project' already exists."
+              protected_branch = project.protected_branches.find_by(name: 'main')
+              if protected_branch
+                protected_branch.destroy
+                puts "Removed protection from main branch."
+              end
+            end
+
+            # Create Runner Token
+            runner = Ci::Runner.instance_type.find_by(description: 'Docker Runner')
+            if runner.nil?
+              runner = Ci::Runner.new(runner_type: 'instance_type', description: 'Docker Runner', run_untagged: true, locked: false)
+              runner.tag_list = ['docker', 'ci', 'staging']
+              runner.save!
+            end
+            puts "RUNNER_TOKEN:#{runner.token}"
+
+            # Add Nexus CI/CD variables to root group
+            root_group = Group.find_by(path: 'root')
+            if root_group.nil?
+              puts "Creating root group for shared CI/CD variables..."
+              params = {
+                name: 'Root',
+                path: 'root',
+                visibility_level: 0
+              }
+              root_group = Groups::CreateService.new(admin_user, params).execute
+              if root_group.persisted?
+                puts "Root group created."
+              else
+                puts "Failed to create root group: #{root_group.errors.full_messages.join(', ')}"
+              end
+            end
+
+            if root_group && root_group.persisted?
+              nexus_registry = root_group.variables.find_by(key: 'NEXUS_REGISTRY')
+              if nexus_registry.nil?
+                root_group.variables.create!(key: 'NEXUS_REGISTRY', value: 'nexus:{{ nexus_docker_port }}', protected: false, masked: false)
+                puts "Added NEXUS_REGISTRY variable."
+              else
+                puts "NEXUS_REGISTRY variable already exists."
+              end
+
+              nexus_user = root_group.variables.find_by(key: 'NEXUS_USER')
+              if nexus_user.nil?
+                root_group.variables.create!(key: 'NEXUS_USER', value: 'admin', protected: false, masked: false)
+                puts "Added NEXUS_USER variable."
+              else
+                puts "NEXUS_USER variable already exists."
+              end
+
+              nexus_password = root_group.variables.find_by(key: 'NEXUS_PASSWORD')
+              if nexus_password.nil?
+                root_group.variables.create!(key: 'NEXUS_PASSWORD', value: '{{ nexus_admin_password }}', protected: false, masked: true)
+                puts "Added NEXUS_PASSWORD variable."
+              else
+                puts "NEXUS_PASSWORD variable already exists."
+              end
+            end
+
+            # Add instance-level CI/CD variables
+            puts "Adding instance-level CI/CD variables..."
+            [
+              { key: 'NEXUS_REGISTRY', value: 'nexus:{{ nexus_docker_port }}', protected: false, masked: false },
+              { key: 'NEXUS_USER', value: 'admin', protected: false, masked: false },
+              { key: 'NEXUS_PASSWORD', value: '{{ nexus_admin_password }}', protected: false, masked: true }
+            ].each do |var|
+              existing = Ci::InstanceVariable.find_by(key: var[:key])
+              if existing.nil?
+                Ci::InstanceVariable.create!(var)
+                puts "Added instance variable: #{var[:key]}"
+              else
+                puts "Instance variable #{var[:key]} already exists."
+              end
+            end
+
+          rescue => e
+            puts "Error: #{e.message}"
+          end
+
+    # ===== NEXUS CONFIGURATION SCRIPT =====
+    - name: Deploy Nexus configuration script
+      copy:
+        dest: "{{ deploy_path }}/scripts/configure_nexus.sh"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          set -e
+
+          NEXUS_URL="http://localhost:{{ nexus_http_port }}"
+          NEXUS_ADMIN_PASSWORD=""
+
+          # Get Nexus admin password
+          if docker exec nexus cat /nexus-data/admin.password >/dev/null 2>&1; then
+            NEXUS_ADMIN_PASSWORD=$(docker exec nexus cat /nexus-data/admin.password)
+            echo "Retrieved initial Nexus admin password."
+          else
+            NEXUS_ADMIN_PASSWORD="{{ nexus_admin_password }}"
+            echo "Using default Nexus admin password."
+          fi
+
+          # Function to make Nexus API calls
+          nexus_api() {
+            local method=$1
+            local endpoint=$2
+            local data=$3
+            curl -s -X "$method" \
+              -u "admin:${NEXUS_ADMIN_PASSWORD}" \
+              -H "Content-Type: application/json" \
+              "${NEXUS_URL}/service/rest/v1/${endpoint}" \
+              ${data:+-d "$data"}
+          }
+
+          # Change admin password if using initial password
+          if [ "$NEXUS_ADMIN_PASSWORD" != "{{ nexus_admin_password }}" ]; then
+            echo "Changing Nexus admin password..."
+            curl -s -X PUT \
+              -u "admin:${NEXUS_ADMIN_PASSWORD}" \
+              -H "Content-Type: text/plain" \
+              "${NEXUS_URL}/service/rest/v1/security/users/admin/change-password" \
+              -d "{{ nexus_admin_password }}"
+            NEXUS_ADMIN_PASSWORD="{{ nexus_admin_password }}"
+            echo "Nexus admin password changed."
+          fi
+
+          # Enable anonymous access
+          echo "Enabling anonymous access..."
+          nexus_api PUT "security/anonymous" '{"enabled": true, "userId": "anonymous", "realmName": "NexusAuthorizingRealm"}'
+
+          # Activate Docker Bearer Token Realm
+          echo "Activating Docker Bearer Token Realm..."
+          nexus_api PUT "security/realms/active" '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]'
+
+          # Create Docker hosted repository
+          echo "Creating Docker hosted repository..."
+          DOCKER_REPO_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -u "admin:${NEXUS_ADMIN_PASSWORD}" "${NEXUS_URL}/service/rest/v1/repositories/docker/hosted/docker-hosted")
+
+          if [ "$DOCKER_REPO_EXISTS" != "200" ]; then
+            nexus_api POST "repositories/docker/hosted" '{
+              "name": "docker-hosted",
+              "online": true,
+              "storage": {
+                "blobStoreName": "default",
+                "strictContentTypeValidation": true,
+                "writePolicy": "ALLOW"
+              },
+              "docker": {
+                "v1Enabled": false,
+                "forceBasicAuth": false,
+                "httpPort": {{ nexus_docker_port }}
+              }
+            }'
+            echo "Docker hosted repository created."
+          else
+            echo "Docker hosted repository already exists."
+          fi
+
+          # Create content selector for all Docker images
+          echo "Creating content selector for Docker images..."
+          SELECTOR_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -u "admin:${NEXUS_ADMIN_PASSWORD}" "${NEXUS_URL}/service/rest/v1/security/content-selectors/docker-all")
+
+          if [ "$SELECTOR_EXISTS" != "200" ]; then
+            nexus_api POST "security/content-selectors" '{
+              "name": "docker-all",
+              "description": "Select all Docker content",
+              "expression": "format == \"docker\""
+            }'
+            echo "Content selector created."
+          else
+            echo "Content selector already exists."
+          fi
+
+          # Create content selector privilege
+          echo "Creating content selector privilege..."
+          PRIVILEGE_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -u "admin:${NEXUS_ADMIN_PASSWORD}" "${NEXUS_URL}/service/rest/v1/security/privileges/docker-all-privilege")
+
+          if [ "$PRIVILEGE_EXISTS" != "200" ]; then
+            nexus_api POST "security/privileges/repository-content-selector" '{
+              "name": "docker-all-privilege",
+              "description": "Full access to all Docker repositories",
+              "actions": ["READ", "BROWSE", "EDIT", "ADD", "DELETE"],
+              "format": "docker",
+              "repository": "*",
+              "contentSelector": "docker-all"
+            }'
+            echo "Content selector privilege created."
+          else
+            echo "Content selector privilege already exists."
+          fi
+
+          # Create Docker admin role
+          echo "Creating Docker admin role..."
+          ROLE_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -u "admin:${NEXUS_ADMIN_PASSWORD}" "${NEXUS_URL}/service/rest/v1/security/roles/docker-admin")
+
+          if [ "$ROLE_EXISTS" != "200" ]; then
+            nexus_api POST "security/roles" '{
+              "id": "docker-admin",
+              "name": "Docker Admin",
+              "description": "Full access to Docker repositories",
+              "privileges": ["docker-all-privilege", "nx-repository-view-docker-*-*"],
+              "roles": []
+            }'
+            echo "Docker admin role created."
+          else
+            echo "Docker admin role already exists."
+          fi
+
+          # Add Docker admin role to admin user
+          echo "Adding Docker admin role to admin user..."
+          nexus_api PUT "security/users/admin" '{
+            "userId": "admin",
+            "source": "default",
+            "firstName": "Administrator",
+            "lastName": "User",
+            "emailAddress": "admin@example.org",
+            "status": "active",
+            "roles": ["nx-admin", "docker-admin"]
+          }'
+
+          echo "Nexus configuration complete!"
+
+    # ===== START DOCKER COMPOSE =====
+    - name: Create Docker volumes
+      community.docker.docker_volume:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - gitlab_config
+        - gitlab_logs
+        - gitlab_data
+        - nexus_data
+        - gitlab_runner_config
+
+    - name: Start Docker Compose services
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_path }}"
+        state: present
+      register: docker_compose_output
+
+    - name: Display Docker Compose output
+      debug:
+        var: docker_compose_output
+
+    # ===== WAIT FOR SERVICES =====
+    - name: Wait for GitLab to be healthy
+      community.docker.docker_container_info:
+        name: gitlab_server
+      register: gitlab_container
+      until: gitlab_container.container.State.Health.Status == "healthy"
+      retries: 60
+      delay: 30
+
+    - name: Wait for Nexus to be healthy
+      uri:
+        url: "http://localhost:{{ nexus_http_port }}/service/rest/v1/status"
+        method: GET
+        status_code: 200
+      register: nexus_health
+      retries: 30
+      delay: 10
+      until: nexus_health.status == 200
+
+    # ===== CONFIGURE GITLAB =====
+    - name: Copy GitLab configuration script to container
+      command: docker cp {{ deploy_path }}/scripts/configure_gitlab.rb gitlab_server:/tmp/configure_gitlab.rb
+
+    - name: Run GitLab configuration script
+      command: docker exec gitlab_server gitlab-rails runner /tmp/configure_gitlab.rb
+      register: gitlab_config_output
+
+    - name: Display GitLab configuration output
+      debug:
+        var: gitlab_config_output.stdout_lines
+
+    - name: Extract runner token
+      set_fact:
+        runner_token: "{{ gitlab_config_output.stdout | regex_search('RUNNER_TOKEN:(.+)', '\\1') | first }}"
+      when: "'RUNNER_TOKEN:' in gitlab_config_output.stdout"
+
+    - name: Register GitLab Runner
+      command: >
+        docker exec gitlab_runner gitlab-runner register
+        --non-interactive
+        --url "http://gitlab_server"
+        --token "{{ runner_token }}"
+        --executor "docker"
+        --docker-image "alpine:latest"
+        --description "Docker Runner"
+        --tag-list "docker,ci,staging"
+        --run-untagged="true"
+        --locked="false"
+        --access-level="not_protected"
+      when: runner_token is defined
+
+    # ===== CONFIGURE NEXUS =====
+    - name: Run Nexus configuration script
+      command: "{{ deploy_path }}/scripts/configure_nexus.sh"
+      register: nexus_config_output
+
+    - name: Display Nexus configuration output
+      debug:
+        var: nexus_config_output.stdout_lines
+
+    # ===== CONFIGURE FIREWALL =====
+    - name: Configure firewall (UFW)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - "{{ gitlab_http_port }}"
+        - "{{ gitlab_https_port }}"
+        - "{{ gitlab_ssh_port }}"
+        - "{{ nexus_http_port }}"
+        - "{{ nexus_docker_port }}"
+      when: ansible_distribution == "Ubuntu"
+      ignore_errors: yes
+
+    # ===== FINAL STATUS =====
+    - name: Display access information
+      debug:
+        msg:
+          - "============================================"
+          - "Setup complete!"
+          - "============================================"
+          - "GitLab: http://{{ ansible_default_ipv4.address }}:{{ gitlab_http_port }} (root / {{ gitlab_root_password }})"
+          - "Nexus:  http://{{ ansible_default_ipv4.address }}:{{ nexus_http_port }} (admin / {{ nexus_admin_password }})"
+          - "Docker Registry: {{ ansible_default_ipv4.address }}:{{ nexus_docker_port }}"
+          - ""
+          - "To push Docker images:"
+          - "  docker login {{ ansible_default_ipv4.address }}:{{ nexus_docker_port }} -u admin -p {{ nexus_admin_password }}"
+          - "  docker tag myimage {{ ansible_default_ipv4.address }}:{{ nexus_docker_port }}/myimage:tag"
+          - "  docker push {{ ansible_default_ipv4.address }}:{{ nexus_docker_port }}/myimage:tag"
+          - "============================================"

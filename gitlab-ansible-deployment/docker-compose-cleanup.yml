@@ -1,0 +1,46 @@
+---
+- name: Cleanup Docker Compose Deployment
+  hosts: gitlab_servers
+  become: yes
+  vars:
+    deploy_path: "/opt/larek-deploy"
+    remove_volumes: false # Set to true to also remove data volumes
+
+  tasks:
+    - name: Check if docker-compose.yaml exists
+      stat:
+        path: "{{ deploy_path }}/docker-compose.yaml"
+      register: compose_file
+
+    - name: Stop and remove Docker Compose services
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_path }}"
+        state: absent
+        remove_volumes: "{{ remove_volumes }}"
+      when: compose_file.stat.exists
+
+    - name: Remove Docker volumes (if requested)
+      community.docker.docker_volume:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - gitlab_config
+        - gitlab_logs
+        - gitlab_data
+        - nexus_data
+        - gitlab_runner_config
+      when: remove_volumes
+
+    - name: Remove deployment directory
+      file:
+        path: "{{ deploy_path }}"
+        state: absent
+
+    - name: Display cleanup completion
+      debug:
+        msg:
+          - "Docker Compose deployment cleaned up!"
+          - "Volumes removed: {{ remove_volumes }}"
+          - ""
+          - "To also remove Docker itself, run:"
+          - "  apt remove docker-ce docker-ce-cli containerd.io docker-compose-plugin"

@@ -1,0 +1,61 @@
+#!/bin/bash
+# GitLab Configuration Fix Script
+# This script fixes the "unsupported config value grafana" error
+
+echo "=== GitLab Configuration Fix ==="
+
+# Backup current configuration
+echo "1. Backing up current gitlab.rb..."
+sudo cp /etc/gitlab/gitlab.rb /etc/gitlab/gitlab.rb.backup.$(date +%Y%m%d_%H%M%S)
+
+# Create a minimal working gitlab.rb
+echo "2. Creating minimal GitLab configuration..."
+sudo tee /etc/gitlab/gitlab.rb > /dev/null << 'EOF'
+# GitLab minimal configuration for HTTP access
+# Generated to fix configuration errors
+
+external_url 'http://10.10.146.68'
+
+# Basic Rails configuration
+gitlab_rails['time_zone'] = 'UTC'
+gitlab_rails['backup_keep_time'] = 604800
+gitlab_rails['backup_archive_permissions'] = 0644
+
+# Email configuration
+gitlab_rails['smtp_enable'] = false
+gitlab_rails['gitlab_email_from'] = 'gitlab@10.10.146.68'
+
+# Nginx - HTTP only
+nginx['enable'] = true
+nginx['listen_port'] = 80
+nginx['listen_https'] = false
+nginx['redirect_http_to_https'] = false
+
+# PostgreSQL
+postgresql['enable'] = true
+postgresql['shared_buffers'] = "256MB"
+
+# Redis
+redis['enable'] = true
+
+# Puma (application server)
+puma['worker_processes'] = 2
+
+# Sidekiq (background jobs)
+sidekiq['max_concurrency'] = 25
+
+# Disable features not available in CE or causing issues
+# Note: grafana and alertmanager are EE-only features
+
+EOF
+
+echo "3. Setting correct permissions..."
+sudo chmod 600 /etc/gitlab/gitlab.rb
+sudo chown root:root /etc/gitlab/gitlab.rb
+
+echo "4. Attempting GitLab reconfiguration..."
+sudo gitlab-ctl reconfigure
+
+echo "=== Configuration Fix Complete ==="
+echo "If successful, GitLab should be accessible at: http://10.10.146.68"
+echo "Initial root password: sudo cat /etc/gitlab/initial_root_password"
