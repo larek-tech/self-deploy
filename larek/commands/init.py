@@ -93,7 +93,7 @@ def analyze(repo_path_raw: str):
     repo_analyzer.register_analyzer(python.PythonAnalyze)
     repo_schema = repo_analyzer.analyze(repo_path)
 
-    build_path = pathlib.Path(".larek/build.yaml")
+    build_path = repo_path / ".larek/build.yaml"
     os.makedirs(build_path.parent, exist_ok=True)
     write_yaml_file(build_path, repo_schema)
 
@@ -121,7 +121,7 @@ def docker(repo_path_raw: str):
             rprint("\n")
             continue
 
-        dockerfile_path = f".larek/{srv.name}.Dockerfile"
+        dockerfile_path = repo_path / f".larek/{srv.name}.Dockerfile"
         with open(dockerfile_path, "w", encoding="utf-8") as f:
             f.write(dockerfile)
 
@@ -308,14 +308,14 @@ def init(
     console.print(f"[blue]Ветка:[/blue] {branch}")
 
     git_directory = clone_step(repo_url, branch)
-    if git_directory != ".":
-        os.chdir(git_directory)
-    git_directory = "."
 
     analyze(git_directory)
 
     docker(git_directory)
 
+    os.chdir(git_directory)
+    git_directory = "."
+
     gitlab_step(git_directory)
 
-    push_to_gitlab(git_directory)
+    # push_to_gitlab(git_directory)
