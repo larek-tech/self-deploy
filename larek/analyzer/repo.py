@@ -41,6 +41,7 @@ class RepoAnalyzer:
             if len(services) > 1:
                 is_monorepo = True
 
+
         return models.RepoSchema(
             is_monorepo=is_monorepo,
             services=services,

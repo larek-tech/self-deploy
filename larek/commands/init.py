@@ -142,14 +142,15 @@ def gitlab_step(repo_path_raw: str):
 
     config = pydantic_yaml.parse_yaml_raw_as(RepoSchema, yml)
     composer = PipelineComposer()
-    for srv in config.services:
-        pipeline = composer.get_pipeline(srv)
-        pipeline_file = ".gitlab-ci.yml"
-        with open(pipeline_file, "w", encoding="utf-8") as f:
-            f.write(pipeline)
 
-        rprint(f"pipeline file {pipeline_file} generated for: {srv.name}")
-        rprint("\n")
+    pipeline = composer.generate_from_schema(config)
+    pipeline_file = ".gitlab-ci.yml"
+    with open(pipeline_file, "w", encoding="utf-8") as f:
+        f.write(pipeline)
+
+    service_names = ", ".join(srv.name for srv in config.services)
+    rprint(f"pipeline file {pipeline_file} generated for: {service_names}")
+    rprint("\n")
 
 
 def push_to_gitlab(repo_path_raw: str):

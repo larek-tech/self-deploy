@@ -19,7 +19,15 @@ docker-build-{{ loop.index }}:
   <<: *docker-build
   script:
     - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
-    - docker build -f {{ dockerfile }} -t "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}" .
+    - |
+      {% if dockerfile is mapping %}
+      DF={{ dockerfile.dockerfile }}
+      CTX={{ dockerfile.context }}
+      {% else %}
+      DF={{ dockerfile }}
+      CTX={{ service.path if service.path else '.' }}
+      {% endif %}
+      docker build -f "$DF" -t "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}" "$CTX"
     - docker push "${NEXUS_REGISTRY}/{{ image_name }}:${IMAGE_TAG}"
     # Tag as latest for default branch
     - |
