@@ -319,4 +319,4 @@ def init(
 
     gitlab_step(git_directory)
 
-    # push_to_gitlab(git_directory)
+    push_to_gitlab(git_directory)
