@@ -3,6 +3,7 @@
 # Services: {{ services | map(attribute='name') | join(', ') }}
 
 stages:
+  - deploy
 {% for stage in stages %}
   - {{ stage }}
 {% endfor %}
