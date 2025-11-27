@@ -18,7 +18,7 @@ from rich.panel import Panel
 from larek.composer.builder import Composer
 from larek.pipeliner.builder import PipelineComposer
 from larek.models import RepoSchema
-from larek.analyzer import repo, go, java, kotlin, javascript
+from larek.analyzer import repo, go, java, kotlin, javascript, python
 from larek import utils
 from larek.utils import git_ops
 from larek.utils.gitlab_auth import get_authenticated_client
@@ -73,8 +73,8 @@ def analyze(repo_path_raw: str):
     repo_analyzer.register_analyzer(go.GoAnalyzer)
     repo_analyzer.register_analyzer(java.JavaAnalyzer)
     repo_analyzer.register_analyzer(kotlin.KotlinAnalyzer)
-    repo_analyzer.register_analyzer(pythonlang.PythonAnalyze)
     repo_analyzer.register_analyzer(javascript.JavaScriptAnalyzer)
+    repo_analyzer.register_analyzer(python.PythonAnalyze)
     repo_schema = repo_analyzer.analyze(repo_path)
 
     build_path = pathlib.Path(".larek/build.yaml")

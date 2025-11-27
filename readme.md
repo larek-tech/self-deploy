@@ -10,7 +10,7 @@ password: SuperSecurePassword123
 
 ### Nexus
 
-### SonarQube
+w### SonarQube
 
 ## Структура проекта
 
