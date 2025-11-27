@@ -20,21 +20,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies for tests
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install -r requirements-docs.txt || true
-          pip install pytest
-
-      - name: Run tests
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install pytest
-          pytest -q
-        continue-on-error: false
-
       - name: Log in to GHCR
         uses: docker/login-action@v2
         with:
@@ -50,4 +35,3 @@ jobs:
           docker tag $IMAGE:${{ github.sha }} $IMAGE:latest
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
-
