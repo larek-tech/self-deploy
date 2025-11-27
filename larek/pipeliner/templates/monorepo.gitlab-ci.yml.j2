@@ -3,62 +3,10 @@
 # Services: {{ services | map(attribute='name') | join(', ') }}
 
 stages:
-  - deploy
 {% for stage in stages %}
   - {{ stage }}
 {% endfor %}
 
-# =============================================================================
-# Manual helper jobs
-# =============================================================================
-
-# Manual debug job — run quick diagnostics on CI runner when triggered manually
-pipeline:debug:
-  stage: deploy
-  image: alpine:latest
-  rules:
-    - when: manual
-  script:
-    - echo "--- CI runner diagnostics ---"
-    - uname -a || true
-    - echo "--- env vars (filtered) ---"
-    - env | grep -E 'CI_|GITLAB' || true
-    - echo "--- build yaml ---"
-    - cat .larek/build.yaml
-    - echo "--- workspace top-level ---"
-    - ls -la || true
-    - echo "--- services in this pipeline ---"
-    - |
-      for svc in {{ services | map(attribute='name') | join(' ') }}; do
-        echo "service: $svc" || true
-      done
-  allow_failure: true
-
-# Manual restart job — attempts to trigger a new pipeline for the default branch
-# Requires either `GITLAB_TRIGGER_TOKEN` or `CI_JOB_TOKEN` to be available as a variable
-pipeline:restart:
-  stage: deploy
-  image: curlimages/curl:8.17.0
-  rules:
-    - when: manual
-  script:
-    - |
-      if [ -z "${GITLAB_TRIGGER_TOKEN:-}" ] && [ -z "${CI_JOB_TOKEN:-}" ]; then
-        echo "No trigger token provided (set GITLAB_TRIGGER_TOKEN or rely on CI_JOB_TOKEN).";
-        echo "To trigger remotely, set project trigger token or provide CI_JOB_TOKEN.";
-        exit 0;
-      fi
-    - echo "Triggering pipeline for project ${CI_PROJECT_ID} on ref ${CI_DEFAULT_BRANCH}..."
-    - |
-      TRIG_TOKEN=${GITLAB_TRIGGER_TOKEN:-$CI_JOB_TOKEN};
-      API_URL="${CI_API_V4_URL:-https://${CI_SERVER_HOST:-gitlab.example.com}/api/v4}";
-      curl -sS --fail -X POST "${API_URL}/projects/${CI_PROJECT_ID}/trigger/pipeline" \
-        -F token="${TRIG_TOKEN}" -F ref="${CI_DEFAULT_BRANCH}" || echo "Trigger API call failed (see above)";
-  allow_failure: true
-variables:
-  NEXUS_REGISTRY: "${NEXUS_REGISTRY:-localhost:8081}"
-  NEXUS_USER: "${NEXUS_USER:-admin}"
-  NEXUS_PASSWORD: "${NEXUS_PASSWORD}"
 
 # =============================================================================
 # Shared Templates
@@ -79,13 +27,7 @@ variables:
 {% for cfg in service_configs %}
 .{{ cfg.service.name | replace('-', '_') }}-changes: &{{ cfg.service.name | replace('-', '_') }}_changes
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - {{ cfg.display_path or cfg.service.path }}/**/*
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes:
-        - {{ cfg.display_path or cfg.service.path }}/**/*
-    - if: $CI_COMMIT_TAG
+    - when: always
 
 {% endfor %}
 
