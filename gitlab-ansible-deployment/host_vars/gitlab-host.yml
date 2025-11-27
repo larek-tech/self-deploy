@@ -1,0 +1,6 @@
+---
+# Host-specific overrides
+gitlab_external_url: "http://10.10.146.68"
+
+# VM-specific resource adjustments
+ansible_python_interpreter: /usr/bin/python3

@@ -1,0 +1,433 @@
+---
+# GitLab Comprehensive Backup Playbook
+# Usage: 
+#   ansible-playbook -i inventory.ini gitlab-backup.yml
+#   ansible-playbook -i inventory.ini gitlab-backup.yml --extra-vars "backup_type=full"
+#   ansible-playbook -i inventory.ini gitlab-backup.yml --extra-vars "backup_type=config"
+#   ansible-playbook -i inventory.ini gitlab-backup.yml --tags restore
+#   ansible-playbook -i inventory.ini gitlab-backup.yml --tags cleanup
+
+# ===== USAGE EXAMPLES =====
+#
+# Full backup (default):
+# ansible-playbook -i inventory.ini gitlab-backup.yml
+#
+# Configuration only backup:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --extra-vars "backup_type=config"
+#
+# Data only backup:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --extra-vars "backup_type=data"
+#
+# Restore from backup:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --tags restore --extra-vars "restore_backup_timestamp=20250807_143000"
+#
+# Clean old backups only:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --tags cleanup
+#
+# Test backup integrity:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --tags test
+#
+# Backup with external storage:
+# ansible-playbook -i inventory.ini gitlab-backup.yml --extra-vars "backup_external_path=/mnt/nas/gitlab"
+
+- name: GitLab Backup Management
+  hosts: gitlab_servers
+  become: yes
+  gather_facts: yes 
+
+  vars:
+    # Backup configuration
+    backup_type: "full"  # Options: full, config, data
+    backup_base_path: "/var/opt/gitlab/backups"
+    backup_config_path: "/opt/gitlab-config-backup"
+    backup_external_path: "/mnt/backup"  # External storage mount point
+    backup_retention_days: 7
+    backup_compress: true
+    
+    # Remote backup configuration (optional)
+    remote_backup_enabled: false
+    s3_bucket: ""
+    s3_region: "us-east-1"
+    azure_container: ""
+    
+    # Restore configuration
+    backup_timestamp: ""
+    restore_config_file: ""       # Path to config backup
+
+  tasks:
+    # ===== PRE-BACKUP CHECKS =====
+    - name: Verify GitLab is running
+      shell: gitlab-ctl status
+      register: gitlab_status_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display GitLab status
+      debug:
+        msg: "{{ gitlab_status_check.stdout_lines }}"
+
+    - name: Fail if GitLab is not running
+      fail:
+        msg: |
+          GitLab services are not running properly. 
+          Please start GitLab first with 'sudo gitlab-ctl start'
+          Status: {{ gitlab_status_check.stdout }}
+      when: "'run:' not in gitlab_status_check.stdout"
+      tags: [backup, full, data]
+
+    - name: Check GitLab version and info
+      shell: |
+        echo "=== GitLab System Information ==="
+        gitlab-rake gitlab:env:info | head -20
+        echo -e "\n=== Disk Space Check ==="
+        df -h {{ backup_base_path }}
+        df -h {{ backup_config_path }}
+      register: gitlab_info
+      changed_when: false
+
+    - name: Display system information
+      debug:
+        var: gitlab_info.stdout_lines
+
+    # ===== BACKUP DIRECTORY SETUP =====
+    - name: Create backup directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: git
+        group: git
+        mode: '0755'
+      loop:
+        - "{{ backup_base_path }}"
+        - "{{ backup_config_path }}"
+        - "{{ backup_external_path }}"
+      ignore_errors: yes
+
+    # ===== FULL BACKUP =====
+    - name: Create full GitLab backup
+      block:
+        - name: Generate backup timestamp
+          set_fact:
+              backup_timestamp: "{{ '%Y%m%d_%H%M%S' | strftime }}"
+
+
+        - name: Create GitLab data backup
+          shell: |
+            echo "Starting GitLab data backup..."
+            gitlab-backup create BACKUP=full_{{ backup_timestamp }} CRON=1
+            echo "GitLab data backup completed"
+          register: data_backup_result
+
+        - name: Display data backup result
+          debug:
+            var: data_backup_result.stdout_lines
+
+        - name: Create GitLab configuration backup
+          archive:
+            path:
+              - /etc/gitlab/
+              - /etc/ssh/
+              - /root/.ssh/
+            dest: "{{ backup_config_path }}/gitlab-config-{{ backup_timestamp }}.tar.gz"
+            format: gz
+            owner: root
+            group: root
+            mode: '0600'
+          register: config_backup_result
+
+    - name: Create backup manifest
+      block:
+        - name: Get data backup file info
+          stat:
+            path: "{{ backup_base_path }}/{{ backup_timestamp }}_gitlab_backup.tar"
+          register: data_backup_stat
+          ignore_errors: yes
+
+        - name: Create manifest file
+          copy:
+            content: |
+              # GitLab Backup Manifest
+              # Generated: {{ ansible_date_time.iso8601 }}
+              
+              [Backup Information]
+              Timestamp={{ backup_timestamp }}
+              Type=full
+              Host={{ ansible_hostname }}
+              IP={{ ansible_default_ipv4.address }}
+              
+              [GitLab Information]
+              {{ gitlab_info.stdout }}
+              
+              [Backup Files]
+              Data_Backup={{ backup_base_path }}/{{ backup_timestamp }}_gitlab_backup.tar
+              Config_Backup={{ backup_config_path }}/gitlab-config-{{ backup_timestamp }}.tar.gz
+              
+              [Backup Verification]
+              Data_Backup_Size={% if data_backup_stat.stat.exists %}{{ (data_backup_stat.stat.size / 1024 / 1024) | round(2) }} MB{% else %}Not found{% endif %}
+              Config_Backup_Size={% if config_backup_result.size is defined %}{{ (config_backup_result.size / 1024 / 1024) | round(2) }} MB{% else %}Unknown{% endif %}
+            dest: "{{ backup_config_path }}/backup-manifest-{{ backup_timestamp }}.txt"
+            mode: '0644'
+
+      when: backup_type == "full"
+      tags: [backup, full]
+
+    # ===== CONFIGURATION ONLY BACKUP =====
+    - name: Create configuration backup only
+      block:
+        - name: Generate config backup timestamp
+          set_fact:
+            config_timestamp: "{{ ansible_date_time.strftime('%Y%m%d_%H%M%S') }}"
+
+        - name: Create GitLab configuration backup
+          archive:
+            path:
+              - /etc/gitlab/
+              - /etc/ssh/
+            dest: "{{ backup_config_path }}/gitlab-config-only-{{ config_timestamp }}.tar.gz"
+            format: gz
+            owner: root
+            group: root
+            mode: '0600'
+          register: config_only_result
+
+        - name: Display config backup result
+          debug:
+            msg: |
+              Configuration backup completed:
+              File: {{ backup_config_path }}/gitlab-config-only-{{ config_timestamp }}.tar.gz
+              Size: {{ (config_only_result.size / 1024 / 1024) | round(2) }} MB
+
+      when: backup_type == "config"
+      tags: [backup, config]
+
+    # ===== DATA ONLY BACKUP =====
+
+    - name: Create data backup only
+      block:
+        - name: Generate data backup timestamp
+          set_fact:
+            data_timestamp: "{{ ansible_date_time.strftime('%Y%m%d_%H%M%S') }}"
+
+        - name: Create GitLab data backup
+          shell: |
+            echo "Starting GitLab data-only backup..."
+            gitlab-backup create BACKUP=data_{{ timestamp_result }} CRON=1
+            echo "GitLab data-only backup completed"
+          register: data_only_result
+
+        - name: Display data backup result
+          debug:
+            var: data_only_result.stdout_lines
+
+      when: backup_type == "data"
+      tags: [backup, data]
+
+    # ===== BACKUP VERIFICATION =====
+    - name: List recent backups
+      find:
+        paths: "{{ backup_base_path }}"
+        patterns: "*.tar"
+        age: "-{{ backup_retention_days }}d"
+      register: recent_backups
+      tags: [backup, verify]
+
+    - name: List recent config backups
+      find:
+        paths: "{{ backup_config_path }}"
+        patterns: "*.tar.gz"
+        age: "-{{ backup_retention_days }}d"
+      register: recent_config_backups
+      tags: [backup, verify]
+
+    - name: Display backup inventory
+      debug:
+        msg: |
+          === Backup Inventory ===
+          Data backups ({{ recent_backups.files | length }} files):
+          {% for backup in recent_backups.files %}
+            - {{ backup.path | basename }} ({{ (backup.size / 1024 / 1024) | round(2) }} MB, {{ '%Y-%m-%d %H:%M' | strftime(backup.mtime | float) }})
+          {% endfor %}
+          
+          Config backups ({{ recent_config_backups.files | length }} files):
+          {% for backup in recent_config_backups.files %}
+            - {{ backup.path | basename }} ({{ (backup.size / 1024 / 1024) | round(2) }} MB, {{ '%Y-%m-%d %H:%M' | strftime(backup.mtime | float) }})
+          {% endfor %}
+      tags: [backup, verify]
+
+    # ===== EXTERNAL BACKUP (Optional) =====
+    - name: Copy backups to external storage
+      block:
+        - name: Mount external backup storage
+          mount:
+            path: "{{ backup_external_path }}"
+            state: mounted
+          ignore_errors: yes
+          when: backup_external_path != ""
+
+        - name: Copy recent backups to external storage
+          copy:
+            src: "{{ item.path }}"
+            dest: "{{ backup_external_path }}/{{ item.path | basename }}"
+            remote_src: yes
+            mode: preserve
+          loop: "{{ recent_backups.files + recent_config_backups.files }}"
+          when: backup_external_path != ""
+          ignore_errors: yes
+
+      tags: [backup, external]
+
+    # ===== CLOUD BACKUP (S3 Example) =====
+    - name: Upload to cloud storage
+      block:
+        - name: Install AWS CLI (if needed)
+          package:
+            name: awscli
+            state: present
+          when: remote_backup_enabled and s3_bucket != ""
+
+        - name: Upload backups to S3
+          shell: |
+            aws s3 cp {{ item.path }} s3://{{ s3_bucket }}/gitlab-backups/{{ ansible_hostname }}/$(date +%Y/%m/%d)/
+          loop: "{{ recent_backups.files + recent_config_backups.files }}"
+          when: remote_backup_enabled and s3_bucket != ""
+          ignore_errors: yes
+
+      tags: [backup, cloud]
+
+    # ===== BACKUP CLEANUP =====
+    - name: Clean old backups
+      block:
+        - name: Find old data backups
+          find:
+            paths: "{{ backup_base_path }}"
+            patterns: "*.tar"
+            age: "{{ backup_retention_days }}d"
+          register: old_backups
+
+        - name: Find old config backups
+          find:
+            paths: "{{ backup_config_path }}"
+            patterns: "*.tar.gz"
+            age: "{{ backup_retention_days }}d"
+          register: old_config_backups
+
+        - name: Remove old backups
+          file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_backups.files + old_config_backups.files }}"
+          register: cleanup_result
+
+        - name: Display cleanup results
+          debug:
+            msg: |
+              Cleaned up {{ old_backups.files | length + old_config_backups.files | length }} old backup files
+              (older than {{ backup_retention_days }} days)
+
+      tags: [backup, cleanup, always]
+
+    # ===== RESTORE FUNCTIONALITY =====
+    - name: GitLab restore from backup
+      block:
+        - name: Validate restore parameters
+          fail:
+            msg: "restore_backup_timestamp is required for restore operation"
+          when: restore_backup_timestamp == ""
+
+        - name: Stop GitLab services (except database)
+          shell: |
+            gitlab-ctl stop puma
+            gitlab-ctl stop sidekiq
+            echo "Stopped application services"
+          register: stop_services_result
+
+        - name: Restore GitLab data
+          shell: |
+            echo "Starting GitLab restore..."
+            gitlab-backup restore BACKUP={{ restore_backup_timestamp }} force=yes
+            echo "GitLab data restore completed"
+          register: restore_result
+
+        - name: Restore configuration (if specified)
+          unarchive:
+            src: "{{ restore_config_file }}"
+            dest: /
+            remote_src: yes
+            owner: root
+            group: root
+          when: restore_config_file != ""
+
+        - name: Reconfigure GitLab after restore
+          shell: gitlab-ctl reconfigure
+          register: reconfigure_result
+
+        - name: Start GitLab services
+          shell: gitlab-ctl start
+          register: start_services_result
+
+        - name: Verify restore
+          shell: gitlab-ctl status
+          register: restore_verification
+
+        - name: Display restore results
+          debug:
+            msg:
+              - "=== GitLab Restore Completed ==="
+              - "Restored from: {{ restore_backup_timestamp }}"
+              - "Config restored: {{ 'Yes' if restore_config_file != '' else 'No' }}"
+              - "Services status:"
+              - "{{ restore_verification.stdout_lines }}"
+
+      tags: [never, restore]
+
+    # ===== BACKUP TESTING =====
+    - name: Test backup integrity
+      block:
+        - name: Test latest backup file
+          shell: |
+            LATEST_BACKUP=$(ls -t {{ backup_base_path }}/*.tar | head -1)
+            if [ -f "$LATEST_BACKUP" ]; then
+              echo "Testing backup integrity: $LATEST_BACKUP"
+              tar -tzf "$LATEST_BACKUP" > /dev/null
+              echo "✅ Backup integrity test passed"
+              echo "Backup file: $LATEST_BACKUP"
+              echo "Backup size: $(du -h $LATEST_BACKUP | cut -f1)"
+            else
+              echo "❌ No backup files found"
+              exit 1
+            fi
+          register: integrity_test
+          changed_when: false
+
+        - name: Display integrity test results
+          debug:
+            var: integrity_test.stdout_lines
+
+      tags: [backup, test]
+
+    # ===== FINAL BACKUP SUMMARY =====
+    - name: Generate backup summary
+      debug:
+        msg:
+          - "🎯 GitLab Backup Operation Complete!"
+          - ""
+          - "Backup Details:"
+          - "  Type: {{ backup_type }}"
+          - "  Timestamp: {{ backup_timestamp | default('N/A') }}"
+          - "  Host: {{ ansible_hostname }} ({{ ansible_default_ipv4.address }})"
+          - "  Retention: {{ backup_retention_days }} days"
+          - ""
+          - "Storage Locations:"
+          - "  Data backups: {{ backup_base_path }}"
+          - "  Config backups: {{ backup_config_path }}"
+          - "  External storage: {{ backup_external_path if backup_external_path != '' else 'Not configured' }}"
+          - ""
+          - "Recent backups: {{ recent_backups.files | length }} data + {{ recent_config_backups.files | length }} config files"
+          - "Total backup storage used: {{ ((recent_backups.files | sum(attribute='size') + recent_config_backups.files | sum(attribute='size')) / 1024 / 1024) | round(2) }} MB"
+          - ""
+          - "📋 Useful Commands:"
+          - "  List backups: ls -la {{ backup_base_path }}"
+          - "  Restore backup: ansible-playbook gitlab-backup.yml --tags restore --extra-vars 'restore_backup_timestamp=YYYYMMDD_HHMMSS'"
+          - "  Test backups: ansible-playbook gitlab-backup.yml --tags test"
+      tags: [always]
+

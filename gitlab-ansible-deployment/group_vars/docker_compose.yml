@@ -1,0 +1,23 @@
+---
+# Docker Compose Deployment Configuration
+# Copy this file or merge with all.yml
+
+# Project settings
+project_name: "larek-cli"
+deploy_path: "/opt/larek-deploy"
+
+# GitLab settings
+gitlab_root_password: "SuperSecurePassword123"
+gitlab_external_url: "http://{{ ansible_default_ipv4.address }}"
+gitlab_email_from: "admin@larek.tech"
+gitlab_http_port: 80
+gitlab_https_port: 443
+gitlab_ssh_port: 2222
+
+# Nexus settings
+nexus_http_port: 8081
+nexus_docker_port: 8082
+nexus_admin_password: "admin123"
+
+# Docker settings
+docker_compose_version: "2.24.0"

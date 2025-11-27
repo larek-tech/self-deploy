@@ -1,0 +1,284 @@
+---
+# GitLab Complete Removal Playbook
+# Usage: ansible-playbook -i inventory.ini gitlab-cleanup.yml
+# 
+# This playbook completely removes GitLab from the system
+# WARNING: This will delete all GitLab data, repositories, and configuration!
+
+- name: GitLab Complete Removal
+  hosts: gitlab_servers
+  become: yes
+  vars:
+    gitlab_edition: "gitlab-ce"  # or "gitlab-ee"
+    
+  tasks:
+    # ===== CONFIRMATION =====
+    - name: Confirm GitLab removal
+      pause:
+        prompt: |
+          
+          ⚠️  WARNING: This will COMPLETELY REMOVE GitLab and ALL DATA!
+          
+          This includes:
+          - All Git repositories
+          - All user data
+          - All configuration
+          - All databases
+          - All logs
+          
+          Type 'YES' to continue, or Ctrl+C to abort
+      register: confirmation
+      
+    - name: Verify confirmation
+      fail:
+        msg: "Operation cancelled - you must type 'YES' to confirm removal"
+      when: confirmation.user_input != "YES"
+
+
+      # ===== FIX DPKG STATE =====
+    - name: Ensure dpkg is not in a broken state
+      shell: "dpkg --configure -a"
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Force apt cache update
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+        
+    # ===== PRE-REMOVAL BACKUP OPTION =====
+    - name: Offer emergency backup
+      pause:
+        prompt: |
+          
+          Do you want to create an emergency backup before removal?
+          Type 'backup' to create backup, or 'skip' to proceed without backup
+      register: backup_choice
+      
+    - name: Create emergency backup
+      shell: |
+        echo "Creating emergency backup..."
+        gitlab-backup create BACKUP=emergency_$(date +%Y%m%d_%H%M%S)
+        tar -czf /tmp/gitlab-config-emergency-$(date +%Y%m%d_%H%M%S).tar.gz /etc/gitlab/ 2>/dev/null || true
+        echo "Emergency backup completed"
+      when: backup_choice.user_input == "backup"
+      ignore_errors: yes
+
+    # ===== STOP GITLAB SERVICES =====
+    - name: Stop all GitLab services
+      shell: gitlab-ctl stop
+      ignore_errors: yes
+      register: gitlab_stop_result
+      
+    - name: Display stop result
+      debug:
+        var: gitlab_stop_result.stdout_lines
+      when: gitlab_stop_result is defined
+
+    - name: Kill any remaining GitLab processes
+      shell: |
+        pkill -f gitlab 2>/dev/null || true
+        pkill -f runsv 2>/dev/null || true  
+        pkill -f runsvdir 2>/dev/null || true
+        pkill -f postgres 2>/dev/null || true
+        pkill -f redis 2>/dev/null || true
+        pkill -f puma 2>/dev/null || true
+        pkill -f sidekiq 2>/dev/null || true
+        pkill -f gitaly 2>/dev/null || true
+        sleep 5
+      ignore_errors: yes
+
+    # ===== REMOVE GITLAB PACKAGE =====
+    - name: Remove GitLab package
+      package:
+        name: "{{ item }}"
+        state: absent
+        purge: yes
+      loop:
+        - "{{ gitlab_edition }}"
+        - gitlab-ce
+        - gitlab-ee
+      ignore_errors: yes
+
+    # ===== REMOVE GITLAB DIRECTORIES =====
+    - name: Remove GitLab directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/gitlab
+        - /var/opt/gitlab  
+        - /etc/gitlab
+        - /var/log/gitlab
+        - /var/run/gitlab
+        - /tmp/gitlab*
+      ignore_errors: yes
+
+    # ===== REMOVE GITLAB USERS AND GROUPS =====
+    - name: Remove GitLab users
+      user:
+        name: "{{ item }}"
+        state: absent
+        remove: yes
+        force: yes
+      loop:
+        - git
+        - gitlab-www
+        - gitlab-redis
+        - gitlab-psql
+        - gitlab-prometheus
+        - registry
+        - mattermost
+      ignore_errors: yes
+
+    - name: Remove GitLab groups  
+      group:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - git
+        - gitlab-www
+        - gitlab-redis
+        - gitlab-psql
+        - gitlab-prometheus
+        - registry
+        - mattermost
+      ignore_errors: yes
+
+    # ===== REMOVE REPOSITORIES AND SOURCES =====
+    - name: Remove GitLab repository file
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/gitlab_official.list
+        - /etc/apt/sources.list.d/gitlab_gitlab-ce.list
+        - /etc/apt/sources.list.d/gitlab_gitlab-ee.list
+      when: ansible_os_family == "Debian"
+
+    - name: Remove GitLab GPG key
+      apt_key:
+        keyserver: packages.gitlab.com
+        state: absent
+      ignore_errors: yes
+      when: ansible_os_family == "Debian"
+
+    # ===== CLEAN APT CACHE =====
+    - name: Clean apt cache
+      apt:
+        autoclean: yes
+        autoremove: yes
+      when: ansible_os_family == "Debian"
+
+    # ===== REMOVE CRON JOBS =====
+    - name: Remove GitLab cron jobs
+      cron:
+        name: "{{ item }}"
+        state: absent
+        user: root
+      loop:
+        - "GitLab automated backup"
+        - "GitLab backup"
+        - "GitLab config backup"
+        - "gitlab backup"
+      ignore_errors: yes
+
+    # ===== CLEAN SYSTEMD =====
+    - name: Remove GitLab systemd services
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+        daemon_reload: yes
+      loop:
+        - gitlab-runsvdir
+        - gitlab-runsvdir.service
+      ignore_errors: yes
+
+    - name: Remove GitLab systemd service files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/gitlab-runsvdir.service
+        - /usr/lib/systemd/system/gitlab-runsvdir.service
+        - /lib/systemd/system/gitlab-runsvdir.service
+      ignore_errors: yes
+
+    # ===== CLEAN FIREWALL RULES =====
+    - name: Remove GitLab firewall rules (UFW)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        delete: yes
+      loop:
+        - '80'
+        - '443'  
+      when: ansible_distribution == "Ubuntu"
+      ignore_errors: yes
+
+    # ===== VERIFICATION =====
+    - name: Verify GitLab removal
+      shell: |
+        echo "=== GitLab Removal Verification ==="
+        echo "1. Checking GitLab processes:"
+        ps aux | grep -E "(gitlab|gitaly|puma|sidekiq|redis|postgres)" | grep -v grep || echo "No GitLab processes found ✅"
+        
+        echo -e "\n2. Checking GitLab directories:"
+        ls -la /opt/gitlab 2>/dev/null && echo "❌ /opt/gitlab still exists" || echo "✅ /opt/gitlab removed"
+        ls -la /var/opt/gitlab 2>/dev/null && echo "❌ /var/opt/gitlab still exists" || echo "✅ /var/opt/gitlab removed"  
+        ls -la /etc/gitlab 2>/dev/null && echo "❌ /etc/gitlab still exists" || echo "✅ /etc/gitlab removed"
+        
+        echo -e "\n3. Checking GitLab users:"
+        id git 2>/dev/null && echo "❌ git user still exists" || echo "✅ git user removed"
+        
+        echo -e "\n4. Checking GitLab packages:"
+        dpkg -l | grep gitlab || echo "✅ No GitLab packages found"
+        
+        echo -e "\n5. Checking GitLab repositories:"
+        ls -la /etc/apt/sources.list.d/gitlab* 2>/dev/null && echo "❌ GitLab repositories still exist" || echo "✅ GitLab repositories removed"
+        
+        echo -e "\n=== Verification Complete ==="
+      register: verification_result
+      changed_when: false
+
+    - name: Display verification results
+      debug:
+        var: verification_result.stdout_lines
+
+    # ===== CLEANUP REPORT =====
+    - name: Display cleanup summary
+      debug:
+        msg:
+          - "🎯 GitLab Removal Complete!"
+          - ""
+          - "Removed components:"
+          - "  ✅ GitLab package ({{ gitlab_edition }})"
+          - "  ✅ All GitLab directories (/opt/gitlab, /var/opt/gitlab, /etc/gitlab)"
+          - "  ✅ GitLab users (git, gitlab-www, etc.)"
+          - "  ✅ GitLab processes and services"
+          - "  ✅ GitLab repositories and GPG keys"
+          - "  ✅ Cron jobs and systemd services"
+          - "  ✅ Firewall rules"
+          - ""
+          - "⚠️  Note: Emergency backups (if created) are in /tmp/"
+          - ""
+          - "System is now clean and ready for fresh GitLab installation."
+
+    # ===== REBOOT OPTION =====
+    - name: Offer system reboot
+      pause:
+        prompt: |
+          
+          GitLab removal is complete. 
+          A reboot is recommended to ensure all processes are cleaned up.
+          
+          Type 'reboot' to reboot now, or 'skip' to continue without reboot
+      register: reboot_choice
+
+    - name: Reboot system
+      reboot:
+        msg: "Rebooting after GitLab removal"
+        pre_reboot_delay: 5
+      when: reboot_choice.user_input == "reboot"

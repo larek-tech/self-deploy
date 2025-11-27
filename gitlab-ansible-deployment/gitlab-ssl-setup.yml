@@ -1,0 +1,439 @@
+---
+# GitLab SSL Certificate Setup Playbook
+# This playbook creates SSL certificates for GitLab HTTPS access
+# Usage: ansible-playbook -i inventory.ini gitlab-ssl-setup.yml
+#
+# Options:
+#   --extra-vars "ssl_domain=localhost"
+#   --extra-vars "ssl_type=self_signed"  # Options: self_signed, letsencrypt
+#   --extra-vars "cert_validity_days=365"
+
+- name: GitLab SSL Certificate Setup
+  hosts: gitlab_servers
+  become: yes
+  vars:
+    # SSL Configuration
+    ssl_domain: "{{ ansible_default_ipv4.address }}"  # Can be overridden
+    ssl_type: "self_signed"  # Options: self_signed, letsencrypt
+    cert_validity_days: 365
+    
+    # Certificate paths
+    ssl_cert_dir: "/etc/gitlab/ssl"
+    ssl_cert_file: "{{ ssl_cert_dir }}/{{ ssl_domain }}.crt"
+    ssl_key_file: "{{ ssl_cert_dir }}/{{ ssl_domain }}.key"
+    ssl_csr_file: "{{ ssl_cert_dir }}/{{ ssl_domain }}.csr"
+    
+    # Certificate details
+    ssl_country: "US"
+    ssl_state: "State"
+    ssl_city: "City"
+    ssl_organization: "Organization"
+    ssl_organizational_unit: "IT Department"
+    ssl_email: "admin@{{ ssl_domain }}"
+    
+    # Subject Alternative Names (SAN) - important for modern browsers
+    ssl_subject_alt_names:
+      - "DNS:{{ ssl_domain }}"
+      - "DNS:localhost"
+      - "DNS:{{ ansible_hostname }}"
+      - "DNS:{{ ansible_fqdn }}"
+      - "IP:{{ ansible_default_ipv4.address }}"
+      - "IP:127.0.0.1"
+
+  tasks:
+    # ===== PRE-CHECKS =====
+    - name: Display SSL configuration
+      debug:
+        msg:
+          - "=== GitLab SSL Setup Configuration ==="
+          - "SSL Type: {{ ssl_type }}"
+          - "Domain: {{ ssl_domain }}"
+          - "Certificate validity: {{ cert_validity_days }} days"
+          - "Certificate path: {{ ssl_cert_file }}"
+          - "Key path: {{ ssl_key_file }}"
+          - "Subject Alternative Names:"
+          - "{{ ssl_subject_alt_names }}"
+
+    - name: Install required packages
+      package:
+        name:
+          - openssl
+          - ca-certificates
+        state: present
+
+    # ===== SSL DIRECTORY SETUP =====
+    - name: Create SSL directory
+      file:
+        path: "{{ ssl_cert_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Backup existing certificates
+      shell: |
+        if [ -f "{{ ssl_cert_file }}" ]; then
+          cp "{{ ssl_cert_file }}" "{{ ssl_cert_file }}.backup.$(date +%Y%m%d_%H%M%S)"
+        fi
+        if [ -f "{{ ssl_key_file }}" ]; then
+          cp "{{ ssl_key_file }}" "{{ ssl_key_file }}.backup.$(date +%Y%m%d_%H%M%S)"
+        fi
+      ignore_errors: yes
+
+    # ===== SELF-SIGNED CERTIFICATE CREATION =====
+    - name: Create self-signed SSL certificate
+      block:
+        - name: Generate SSL private key
+          openssl_privatekey:
+            path: "{{ ssl_key_file }}"
+            size: 4096
+            mode: '0600'
+            owner: root
+            group: root
+
+        - name: Create certificate signing request (CSR)
+          openssl_csr:
+            path: "{{ ssl_csr_file }}"
+            privatekey_path: "{{ ssl_key_file }}"
+            country_name: "{{ ssl_country }}"
+            state_or_province_name: "{{ ssl_state }}"
+            locality_name: "{{ ssl_city }}"
+            organization_name: "{{ ssl_organization }}"
+            organizational_unit_name: "{{ ssl_organizational_unit }}"
+            common_name: "{{ ssl_domain }}"
+            email_address: "{{ ssl_email }}"
+            subject_alt_name: "{{ ssl_subject_alt_names }}"
+            mode: '0644'
+
+        - name: Generate self-signed SSL certificate
+          openssl_certificate:
+            path: "{{ ssl_cert_file }}"
+            privatekey_path: "{{ ssl_key_file }}"
+            csr_path: "{{ ssl_csr_file }}"
+            provider: selfsigned
+            valid_in: "{{ cert_validity_days * 24 * 3600 }}"  # Convert days to seconds
+            mode: '0644'
+            owner: root
+            group: root
+
+        - name: Remove CSR file (no longer needed)
+          file:
+            path: "{{ ssl_csr_file }}"
+            state: absent
+
+      when: ssl_type == "self_signed"
+
+    # ===== ALTERNATIVE: MANUAL OPENSSL COMMAND (if openssl_* modules not available) =====
+    - name: Create self-signed certificate using OpenSSL command
+      block:
+        - name: Create OpenSSL configuration file
+          copy:
+            content: |
+              [req]
+              default_bits = 4096
+              prompt = no
+              default_md = sha256
+              distinguished_name = dn
+              req_extensions = v3_req
+              
+              [dn]
+              C={{ ssl_country }}
+              ST={{ ssl_state }}
+              L={{ ssl_city }}
+              O={{ ssl_organization }}
+              OU={{ ssl_organizational_unit }}
+              emailAddress={{ ssl_email }}
+              CN={{ ssl_domain }}
+              
+              [v3_req]
+              basicConstraints = CA:FALSE
+              keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+              extendedKeyUsage = serverAuth
+              subjectAltName = @alt_names
+              
+              [alt_names]
+              {% for san in ssl_subject_alt_names %}
+              {{ san.split(':')[0] }}.{{ loop.index }} = {{ san.split(':')[1] }}
+              {% endfor %}
+            dest: "{{ ssl_cert_dir }}/openssl.conf"
+            mode: '0644'
+
+        - name: Generate private key and certificate using OpenSSL
+          shell: |
+            # Generate private key
+            openssl genrsa -out "{{ ssl_key_file }}" 4096
+            
+            # Set proper permissions on private key
+            chmod 600 "{{ ssl_key_file }}"
+            
+            # Generate certificate
+            openssl req -new -x509 -key "{{ ssl_key_file }}" \
+              -out "{{ ssl_cert_file }}" \
+              -days {{ cert_validity_days }} \
+              -config "{{ ssl_cert_dir }}/openssl.conf" \
+              -extensions v3_req
+            
+            # Set proper permissions on certificate
+            chmod 644 "{{ ssl_cert_file }}"
+          args:
+            creates: "{{ ssl_cert_file }}"
+
+        - name: Clean up OpenSSL configuration file
+          file:
+            path: "{{ ssl_cert_dir }}/openssl.conf"
+            state: absent
+
+      when: ssl_type == "self_signed"
+      tags: [manual_openssl]
+
+    # ===== LET'S ENCRYPT CERTIFICATE (Future enhancement) =====
+    - name: Set up Let's Encrypt certificate
+      block:
+        - name: Install certbot
+          package:
+            name:
+              - certbot
+              - python3-certbot-nginx
+            state: present
+
+        - name: Stop GitLab temporarily for certificate generation
+          shell: gitlab-ctl stop nginx
+          ignore_errors: yes
+
+        - name: Generate Let's Encrypt certificate
+          shell: |
+            certbot certonly --standalone \
+              -d {{ ssl_domain }} \
+              --email {{ ssl_email }} \
+              --agree-tos \
+              --non-interactive
+          register: letsencrypt_result
+
+        - name: Copy Let's Encrypt certificates to GitLab location
+          shell: |
+            cp /etc/letsencrypt/live/{{ ssl_domain }}/fullchain.pem {{ ssl_cert_file }}
+            cp /etc/letsencrypt/live/{{ ssl_domain }}/privkey.pem {{ ssl_key_file }}
+            chmod 644 {{ ssl_cert_file }}
+            chmod 600 {{ ssl_key_file }}
+
+        - name: Start GitLab nginx
+          shell: gitlab-ctl start nginx
+
+      when: ssl_type == "letsencrypt"
+      tags: [letsencrypt]
+
+    # ===== CERTIFICATE VERIFICATION =====
+    - name: Verify certificate files exist
+      stat:
+        path: "{{ item }}"
+      register: cert_files_check
+      loop:
+        - "{{ ssl_cert_file }}"
+        - "{{ ssl_key_file }}"
+
+    - name: Fail if certificate files don't exist
+      fail:
+        msg: "Certificate file {{ item.item }} does not exist!"
+      when: not item.stat.exists
+      loop: "{{ cert_files_check.results }}"
+
+    - name: Get certificate information
+      shell: |
+        echo "=== Certificate Information ==="
+        openssl x509 -in "{{ ssl_cert_file }}" -text -noout | grep -E "(Subject:|Issuer:|Not Before:|Not After:|Subject Alternative Name:)" -A1
+        echo ""
+        echo "=== Certificate Verification ==="
+        openssl x509 -in "{{ ssl_cert_file }}" -noout -dates
+        echo ""
+        echo "=== Key Match Verification ==="
+        CERT_HASH=$(openssl x509 -noout -modulus -in "{{ ssl_cert_file }}" | openssl md5)
+        KEY_HASH=$(openssl rsa -noout -modulus -in "{{ ssl_key_file }}" | openssl md5)
+        if [ "$CERT_HASH" = "$KEY_HASH" ]; then
+          echo "✅ Certificate and key match"
+        else
+          echo "❌ Certificate and key do NOT match"
+        fi
+      register: cert_info
+      changed_when: false
+
+    - name: Display certificate information
+      debug:
+        var: cert_info.stdout_lines
+
+    # ===== GITLAB SSL CONFIGURATION =====
+    - name: Update GitLab configuration for SSL
+      copy:
+        content: |
+          # GitLab Configuration with SSL - Generated by Ansible
+          external_url 'https://{{ ssl_domain }}'
+          
+          # Basic Rails settings
+          gitlab_rails['time_zone'] = 'UTC'
+          gitlab_rails['backup_keep_time'] = 604800
+          
+          # Nginx SSL configuration
+          nginx['enable'] = true
+          nginx['listen_port'] = 80
+          nginx['listen_https'] = true
+          nginx['redirect_http_to_https'] = true
+          nginx['ssl_certificate'] = "{{ ssl_cert_file }}"
+          nginx['ssl_certificate_key'] = "{{ ssl_key_file }}"
+          nginx['ssl_protocols'] = "TLSv1.2 TLSv1.3"
+          nginx['ssl_ciphers'] = 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384'
+          nginx['ssl_prefer_server_ciphers'] = 'off'
+          nginx['ssl_session_cache'] = 'builtin:1000 shared:SSL:10m'
+          nginx['ssl_session_timeout'] = '5m'
+          
+          # Security headers
+          nginx['proxy_set_headers'] = {
+            'Host' => '$http_host_with_default',
+            'X-Real-IP' => '$remote_addr',
+            'X-Forwarded-For' => '$proxy_add_x_forwarded_for',
+            'X-Forwarded-Proto' => 'https',
+            'X-Forwarded-Ssl' => 'on'
+          }
+          
+          # Resource optimization
+          puma['worker_processes'] = 2
+          sidekiq['max_concurrency'] = 25
+          postgresql['shared_buffers'] = '256MB'
+          
+          # Disable unnecessary services for single VM
+          prometheus['enable'] = false
+          alertmanager['enable'] = false
+          gitlab_exporter['enable'] = false
+          node_exporter['enable'] = false
+          redis_exporter['enable'] = false
+          postgres_exporter['enable'] = false
+        dest: /etc/gitlab/gitlab.rb
+        mode: '0600'
+        owner: root
+        group: root
+        backup: yes
+      notify: 
+        - reconfigure gitlab
+        - restart gitlab
+
+    # ===== FIREWALL CONFIGURATION =====
+    - name: Configure firewall for HTTPS
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - '443'  # HTTPS
+        - '80'   # HTTP (for redirects)
+        - '22'   # SSH
+      when: ansible_distribution == "Ubuntu"
+
+    # ===== TRUST CERTIFICATE (for self-signed) =====
+    - name: Add self-signed certificate to system trust store
+      block:
+        - name: Copy certificate to system trust directory
+          copy:
+            src: "{{ ssl_cert_file }}"
+            dest: "/usr/local/share/ca-certificates/gitlab-{{ ssl_domain }}.crt"
+            remote_src: yes
+            mode: '0644'
+
+        - name: Update system certificate trust store
+          shell: update-ca-certificates
+          register: update_ca_result
+
+        - name: Display trust store update result
+          debug:
+            var: update_ca_result.stdout_lines
+
+      when: ssl_type == "self_signed"
+
+    # ===== BROWSER CERTIFICATE IMPORT INSTRUCTIONS =====
+    - name: Generate certificate import instructions
+      copy:
+        content: |
+          # GitLab SSL Certificate Import Instructions
+          
+          ## For Self-Signed Certificates:
+          
+          ### Chrome/Edge:
+          1. Open: https://{{ ssl_domain }}
+          2. Click on "Not Secure" or lock icon
+          3. Click "Certificate (Invalid)"
+          4. Go to "Details" tab
+          5. Click "Copy to File" or "Export"
+          6. Save as gitlab-{{ ssl_domain }}.crt
+          7. Chrome Settings → Privacy & Security → Manage Certificates
+          8. Import to "Trusted Root Certificate Authorities"
+          
+          ### Firefox:
+          1. Open: https://{{ ssl_domain }}
+          2. Click "Advanced" → "Accept the Risk and Continue"
+          3. Or: Settings → Privacy & Security → Certificates → View Certificates
+          4. Import the certificate file
+          
+          ### Command Line Import (Linux):
+          sudo cp {{ ssl_cert_file }} /usr/local/share/ca-certificates/gitlab-{{ ssl_domain }}.crt
+          sudo update-ca-certificates
+          
+          ### Windows:
+          1. Download certificate from https://{{ ssl_domain }}
+          2. Right-click → Install Certificate
+          3. Choose "Local Machine" → "Trusted Root Certificate Authorities"
+          
+          ### macOS:
+          1. Download certificate
+          2. Double-click to open Keychain Access
+          3. Drag to "System" keychain
+          4. Double-click certificate → Trust → "Always Trust"
+          
+          ## Certificate Details:
+          Domain: {{ ssl_domain }}
+          Valid for: {{ cert_validity_days }} days
+          Certificate file: {{ ssl_cert_file }}
+          Key file: {{ ssl_key_file }}
+          
+          ## Access URLs:
+          - https://{{ ssl_domain }}
+          - https://localhost (if {{ ssl_domain }} is localhost)
+          - https://{{ ansible_default_ipv4.address }}
+        dest: "{{ ssl_cert_dir }}/certificate-import-instructions.txt"
+        mode: '0644'
+
+    # ===== FINAL SSL SUMMARY =====
+    - name: Display SSL setup summary
+      debug:
+        msg:
+          - "🔒 GitLab SSL Setup Complete!"
+          - ""
+          - "SSL Configuration:"
+          - "  Type: {{ ssl_type }}"
+          - "  Domain: {{ ssl_domain }}"
+          - "  Certificate: {{ ssl_cert_file }}"
+          - "  Private Key: {{ ssl_key_file }}"
+          - "  Validity: {{ cert_validity_days }} days"
+          - ""
+          - "Access URLs:"
+          - "  🌐 https://{{ ssl_domain }}"
+          - "  🌐 https://localhost (if domain is localhost)"  
+          - "  🌐 https://{{ ansible_default_ipv4.address }}"
+          - ""
+          - "⚠️  For self-signed certificates:"
+          - "  - Browser will show security warning initially"
+          - "  - Import certificate to trust store (see instructions file)"
+          - "  - Or accept the security exception"
+          - ""
+          - "📋 Next Steps:"
+          - "  1. Run: ansible-playbook -i inventory.ini gitlab-ssl-setup.yml"
+          - "  2. Access GitLab via HTTPS"
+          - "  3. Import certificate if using self-signed"
+          - "  4. Certificate import instructions: {{ ssl_cert_dir }}/certificate-import-instructions.txt"
+
+  handlers:
+    - name: reconfigure gitlab
+      shell: gitlab-ctl reconfigure
+      register: reconfigure_result
+      retries: 3
+      delay: 60
+      until: reconfigure_result.rc == 0
+
+    - name: restart gitlab
+      shell: gitlab-ctl restart
+      register: restart_result
