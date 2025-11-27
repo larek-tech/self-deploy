@@ -125,12 +125,16 @@ class PythonPipelineBuilder(PipelineBuilder):
         if package_manager == "poetry":
             install_cmd = "poetry install"
             lint_cmd = "poetry run ruff check . && poetry run mypy ."
+            format_cmd = (
+                "poetry run ruff format --check . && poetry run black --check ."
+            )
             test_cmd = (
                 f"poetry run {service.tests}" if service.tests else "poetry run pytest"
             )
         else:  # pip
             install_cmd = "pip install -r requirements.txt"
             lint_cmd = "ruff check . && mypy ."
+            format_cmd = "ruff format --check . && black --check ."
             test_cmd = service.tests or "pytest"
         stages = self.get_stages(service, deployment)
         context = {
@@ -140,12 +144,38 @@ class PythonPipelineBuilder(PipelineBuilder):
             "package_manager": package_manager,
             "install_command": install_cmd,
             "lint_command": lint_cmd,
+            "format_command": format_cmd,
             "test_command": test_cmd,
             "has_lint": has_lint,
             "has_test": has_test,
             **self.get_docker_context(service),
         }
         return self.render_template("python.gitlab-ci.yml.j2", context)
+
+    def get_stages(
+        self, service: Optional[Service] = None, deployment: Optional[Deployment] = None
+    ) -> List[str]:
+        """Return list of pipeline stages for Python projects.
+
+        Always includes lint stage (lint and format run in parallel in this stage).
+        Includes test if tests are detected. Includes docker stage if dockerfiles are present.
+        """
+        stages: List[str] = []
+
+        stages.append("lint")
+
+        if service and service.tests and "echo" not in service.tests.lower():
+            stages.append("test")
+
+        if service and len(service.docker.dockerfiles) > 0:
+            stages.append("docker")
+
+        extra = self.extra_stages(service, deployment)
+        for st in extra:
+            if st not in stages:
+                stages.append(st)
+
+        return stages
 
 
 class NodePipelineBuilder(PipelineBuilder):

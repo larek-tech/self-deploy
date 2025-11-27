@@ -5,6 +5,7 @@ from .go import GoAnalyzer
 from .java import JavaAnalyzer
 from .kotlin import KotlinAnalyzer
 from .javascript import JavaScriptAnalyzer
+from .python import PythonAnalyze
 
 __all__ = [
     "BaseAnalyzer",
@@ -12,4 +13,5 @@ __all__ = [
     "JavaAnalyzer",
     "KotlinAnalyzer",
     "JavaScriptAnalyzer",
+    "PythonAnalyze",
 ]
