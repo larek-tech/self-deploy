@@ -25,12 +25,12 @@ def gitlab(
 
     config = parse_yaml_raw_as(RepoSchema, yml)
     composer = builder.PipelineComposer()
+    for srv in config.services:
+        pipeline = composer.get_pipeline(srv)
 
-    pipeline = composer.generate_from_schema(config)
-    pipeline_file = ".gitlab-ci.yml"
-    with open(pipeline_file, "w", encoding="utf-8") as f:
-        f.write(pipeline)
+        with open(f"{srv.name}.gitlab-ci.yml", "w", encoding="utf-8") as f:
+            f.write(pipeline)
 
-    service_names = ", ".join(srv.name for srv in config.services)
-    rprint(f"pipeline file {pipeline_file} generated for: {service_names}")
-    rprint("\n")
+        rprint("pipeline file generated for " + srv.name)
+
+        rprint("\n")

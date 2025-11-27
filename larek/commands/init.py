@@ -58,18 +58,18 @@ def clone_step(repo_path: str, branch: str) -> str:
             if res.returncode == 0 and (
                 repo_path in res.stdout.strip() or repo_name == pathlib.Path.cwd().name
             ):
-                console.print("[green]✔ Используется текущая директория как репозиторий.[/green]")
+                console.print("[green]Using current directory as repository.[/green]")
                 return "."
         except Exception:
             pass
 
     if os.path.exists(repo_name):
         console.print(
-            f"[yellow]⚠ Директория {repo_name} уже существует. Пропускаем клонирование.[/yellow]"
+            f"[yellow]Directory {repo_name} already exists. Skipping clone.[/yellow]"
         )
         return repo_name
 
-    console.print(f"[green]▶️ Клонируем репозиторий:[/green] {repo_path}")
+    console.print(f"[green]Клонируем репозиторий:[/green] {repo_path}")
     console.print(f"[blue]Ветка:[/blue] {branch}")
 
     subprocess.run(
@@ -77,7 +77,7 @@ def clone_step(repo_path: str, branch: str) -> str:
         check=True,
     )
 
-    console.print(f"[green]✨ Репозиторий {repo_path} успешно склонирован.[/green]")
+    console.print(f"[green]Репозиторий {repo_path} склонирован.[/green]")
     return repo_name
 
 
@@ -103,8 +103,8 @@ def docker(repo_path_raw: str):
     build_file = repo_path / ".larek" / "build.yaml"
 
     if not os.path.exists(build_file):
-        rprint(f"[red]Ошибка: файл не найден: {build_file}[/red]")
-        rprint(f"[yellow]Текущая директория: {os.getcwd()}[/yellow]")
+        rprint(f"[red]Error: File not found: {build_file}[/red]")
+        rprint(f"[yellow]Current working directory: {os.getcwd()}[/yellow]")
         raise typer.Exit(code=1)
 
     with open(build_file, "r", encoding="utf-8") as f:
@@ -116,7 +116,7 @@ def docker(repo_path_raw: str):
         dockerfile = composer.get_dockerfile(srv)
         if dockerfile is None:
             rprint(
-                f"[yellow]Пропускаем генерацию Dockerfile для {srv.name} (Android-проект)[/yellow]"
+                f"[yellow]Skipping Dockerfile generation for {srv.name} (Android project)[/yellow]"
             )
             rprint("\n")
             continue
@@ -125,7 +125,7 @@ def docker(repo_path_raw: str):
         with open(dockerfile_path, "w", encoding="utf-8") as f:
             f.write(dockerfile)
 
-        rprint(f"Dockerfile сгенерирован: {dockerfile_path} для сервиса: {srv.name}")
+        rprint(f"docker file: {dockerfile_path} generated for: {srv.name}")
         rprint("\n")
 
 
@@ -133,8 +133,8 @@ def gitlab_step(repo_path_raw: str):
     repo_path = pathlib.Path(repo_path_raw)
     build_file = repo_path / ".larek" / "build.yaml"
     if not os.path.exists(build_file):
-        rprint(f"[red]Ошибка: файл не найден: {build_file}[/red]")
-        rprint(f"[yellow]Текущая директория: {os.getcwd()}[/yellow]")
+        rprint(f"[red]Error: File not found: {build_file}[/red]")
+        rprint(f"[yellow]Current working directory: {os.getcwd()}[/yellow]")
         raise typer.Exit(code=1)
 
     with open(build_file, "r", encoding="utf-8") as f:
@@ -142,15 +142,14 @@ def gitlab_step(repo_path_raw: str):
 
     config = pydantic_yaml.parse_yaml_raw_as(RepoSchema, yml)
     composer = PipelineComposer()
+    for srv in config.services:
+        pipeline = composer.get_pipeline(srv)
+        pipeline_file = ".gitlab-ci.yml"
+        with open(pipeline_file, "w", encoding="utf-8") as f:
+            f.write(pipeline)
 
-    pipeline = composer.generate_from_schema(config)
-    pipeline_file = ".gitlab-ci.yml"
-    with open(pipeline_file, "w", encoding="utf-8") as f:
-        f.write(pipeline)
-
-    service_names = ", ".join(srv.name for srv in config.services)
-    rprint(f"Файл pipeline {pipeline_file} сгенерирован для: {service_names}")
-    rprint("\n")
+        rprint(f"pipeline file {pipeline_file} generated for: {srv.name}")
+        rprint("\n")
 
 
 def push_to_gitlab(repo_path_raw: str):
@@ -174,7 +173,7 @@ def push_to_gitlab(repo_path_raw: str):
             ):
                 project = p
                 console.print(
-                    f"[green]✅ Найден существующий проект в GitLab: {p.path_with_namespace}[/green]"
+                    f"[green]Found existing project on GitLab: {p.path_with_namespace}[/green]"
                 )
                 break
     except Exception:
@@ -184,7 +183,7 @@ def push_to_gitlab(repo_path_raw: str):
         original_repo_name = repo_name
         for attempt in range(3):
             console.print(
-                f"[blue]▶️ Создание проекта в GitLab (попытка {attempt + 1}/3):[/blue] {repo_name}"
+                f"[blue]Creating project on GitLab (Attempt {attempt + 1}/3):[/blue] {repo_name}"
             )
             try:
                 project = gl.projects.create({"name": repo_name})
@@ -192,7 +191,7 @@ def push_to_gitlab(repo_path_raw: str):
             except Exception as e:
                 if "has already been taken" in str(e):
                     console.print(
-                        f"[yellow]Проект '{repo_name}' уже существует.[/yellow]"
+                        f"[yellow]Project '{repo_name}' already exists.[/yellow]"
                     )
                     if attempt < 2:
                         suffix = "".join(
@@ -200,88 +199,88 @@ def push_to_gitlab(repo_path_raw: str):
                         )
                         repo_name = f"{original_repo_name}-{suffix}"
                         console.print(
-                            f"[yellow]Пробуем новое имя: {repo_name}[/yellow]"
+                            f"[yellow]Retrying with new name: {repo_name}[/yellow]"
                         )
                     else:
                         rprint(
-                            f"[red]Ошибка: не удалось создать проект после 3 попыток.[/red]"
+                            f"[red]Error: Could not create project after 3 attempts.[/red]"
                         )
                         raise typer.Exit(code=1)
                 else:
-                    rprint(f"[red]Ошибка при создании проекта: {e}[/red]")
+                    rprint(f"[red]Error creating project: {e}[/red]")
                     raise typer.Exit(code=1)
 
     if not project:
-        rprint("[red]Ошибка: создание проекта завершилось неудачей.[/red]")
+        rprint("[red]Error: Project creation failed unexpectedly.[/red]")
         raise typer.Exit(code=1)
 
     http_url = utils.resolve_docker_url(project.http_url_to_repo)
 
     console.print(
         Panel(
-            f"[green]✓ Проект успешно создан![/green]\n\n"
-            f"[bold]Проект:[/bold] {project.name}\n"
+            f"[green]✓ Project created successfully![/green]\n\n"
+            f"[bold]Project:[/bold] {project.name}\n"
             f"[bold]URL:[/bold] {project.web_url}\n"
             f"[bold]SSH URL:[/bold] {project.ssh_url_to_repo}\n"
             f"[bold]HTTP URL:[/bold] {http_url}",
-            title="[bold cyan]Новый репозиторий GitLab[/bold cyan]",
+            title="[bold cyan]New GitLab Repository[/bold cyan]",
             border_style="green",
         )
     )
 
     prev_branch = git_ops.create_and_checkout_branch("ci")
 
-    console.print("[blue]Коммитим сгенерированные файлы на ветку 'ci'...[/blue]")
+    console.print("[blue]Committing generated files on 'ci' branch...[/blue]")
     git_ops.add_all()
     if not git_ops.commit("[ci]: generated by larek cli"):
-        console.print("[yellow]Нет изменений для коммита.[/yellow]")
+        console.print("[yellow]Nothing to commit.[/yellow]")
 
     res = None
     try:
         res = git_ops.ensure_remote("gitlab", project.ssh_url_to_repo)
         if res == "added":
-            console.print("[green]Удалённый 'gitlab' добавлен.[/green]")
+            console.print("[green]Remote 'gitlab' added.[/green]")
         else:
-            console.print("[yellow]Удалённый 'gitlab' обновлён новым URL.[/yellow]")
+            console.print("[yellow]Remote 'gitlab' updated with new URL.[/yellow]")
     except Exception as e:
-        console.print(f"[red]Не удалось настроить remote: {e}[/red]")
+        console.print(f"[red]Failed to configure remote: {e}[/red]")
 
-    console.print("[blue]Отправляем в GitLab...[/blue]")
+    console.print("[blue]Pushing to GitLab...[/blue]")
 
     if not git_ops.push_all("gitlab"):
         console.print(
-            "[yellow]Не удалось выполнить push. Пытаемся синхронизироваться с remote и повторить...[/yellow]"
+            "[yellow]Push failed. Attempting to reconcile with remote and retry...[/yellow]"
         )
         current_branch = git_ops.current_branch() or "main"
         console.print(
-            f"[blue]Получаем изменения с remote 'gitlab' и подтягиваем ветку '{current_branch}'...[/blue]"
+            f"[blue]Fetching from remote 'gitlab' and pulling branch '{current_branch}'...[/blue]"
         )
         try:
             git_ops.fetch("gitlab")
             git_ops.pull_rebase("gitlab", current_branch)
         except Exception as pull_err:
             console.print(
-                f"[red]Ошибка при git pull: {pull_err}\nБудет предпринята попытка force-push как последний вариант.[/red]"
+                f"[red]Git pull failed: {pull_err}\nWill attempt force-push as last resort.[/red]"
             )
 
         if not git_ops.push_all("gitlab"):
             console.print(
-                "[yellow]Повторный push не удался, пробуем force-with-lease...[/yellow]"
+                "[yellow]Retry push failed, trying force-with-lease...[/yellow]"
             )
             git_ops.push_force_with_lease("gitlab")
 
-    console.print("[green]✅ Репозиторий успешно отправлен в GitLab![/green]")
-    console.print(f"[blue]Откройте проект в браузере:[/blue] {project.web_url}")
+    console.print("[green]✓ Repository pushed to GitLab successfully![/green]")
+    console.print(f"[blue]View your project at:[/blue] {project.web_url}")
 
     try:
         if prev_branch and prev_branch != "ci":
             console.print(
-                f"[blue]Возвращаемся на предыдущую ветку '{prev_branch}'...[/blue]"
+                f"[blue]Checking out previous branch '{prev_branch}'...[/blue]"
             )
             git_ops.checkout(prev_branch)
     except Exception:
         console.print(
-            "[yellow]Не удалось автоматически переключиться на предыдущую ветку.[/yellow]"
+            "[yellow]Could not switch back to previous branch automatically.[/yellow]"
         )
 
 
@@ -305,7 +304,7 @@ def init(
         larek init https://gitlab.local/root/my-project.git
     """
 
-    console.print(f"[green]▶️ Инициализация проекта из репозитория:[/green] {repo_url}")
+    console.print(f"[green]Инициализация проекта из репозитория:[/green] {repo_url}")
     console.print(f"[blue]Ветка:[/blue] {branch}")
 
     git_directory = clone_step(repo_url, branch)
@@ -319,4 +318,4 @@ def init(
 
     gitlab_step(git_directory)
 
-    push_to_gitlab(git_directory)
+    # push_to_gitlab(git_directory)
