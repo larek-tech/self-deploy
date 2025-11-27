@@ -1,0 +1,139 @@
+# GitLab CI Pipeline for {{ service.name }}
+# Language: Android (Java {{ java_version }})
+# Application ID: {{ android.application_id or 'N/A' }}
+
+stages:
+{% for stage in stages %}
+  - {{ stage }}
+{% endfor %}
+
+variables:
+  JAVA_VERSION: "{{ java_version }}"
+  ANDROID_COMPILE_SDK: "{{ android.compile_sdk_version or '33' }}"
+  ANDROID_BUILD_TOOLS: "33.0.0"
+  ANDROID_SDK_TOOLS: "9477386"
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.configureondemand=true"
+  ANDROID_HOME: "${CI_PROJECT_DIR}/.android-sdk"
+  PATH: "${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/${ANDROID_BUILD_TOOLS}:${PATH}"
+
+default:
+  image: eclipse-temurin:{{ java_version }}-jdk
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-android"
+    paths:
+      - .gradle/
+      - .android-sdk/
+      - build/
+      - app/build/
+  before_script:
+    - |
+      if [ ! -d "${ANDROID_HOME}" ]; then
+        mkdir -p "${ANDROID_HOME}"
+        cd "${ANDROID_HOME}"
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_SDK_TOOLS}_latest.zip
+        unzip -q commandlinetools-linux-${ANDROID_SDK_TOOLS}_latest.zip
+        mkdir -p cmdline-tools/latest
+        mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true
+        rm commandlinetools-linux-${ANDROID_SDK_TOOLS}_latest.zip
+        yes | sdkmanager --licenses || true
+        sdkmanager "platform-tools" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}"
+      fi
+    - export ANDROID_HOME="${ANDROID_HOME}"
+    - export PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/${ANDROID_BUILD_TOOLS}:${PATH}"
+    - chmod +x ./gradlew || true
+
+{% if has_lint %}
+
+lint:
+  stage: lint
+  script:
+    - {{ lint_command }}
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{% endif %}
+{% if has_test %}
+
+test:
+  stage: test
+  script:
+    - {{ test_command }}
+  artifacts:
+    reports:
+      junit:
+        - app/build/test-results/**/*.xml
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{% endif %}
+
+build:
+  stage: build
+  script:
+{% for cmd in build_commands %}
+    - {{ cmd }}
+{% endfor %}
+    - |
+      echo "Built APK files:"
+      find . -name "*.apk" -type f | head -20
+  artifacts:
+    paths:
+{% for variant in build_variants %}
+      - "app/build/outputs/apk/*/{{ variant.lower() }}/*.apk"
+{% endfor %}
+      # Fallback patterns
+      - "app/**/*.apk"
+      - "**/outputs/apk/**/*.apk"
+    expire_in: 1 week
+    reports:
+      junit:
+        - app/build/test-results/**/*.xml
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+{% if has_signing %}
+
+sign:
+  stage: sign
+  dependencies:
+    - build
+  script:
+    - |
+      if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+        echo "Signing APK files..."
+        echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore.jks
+        
+        find app/build/outputs/apk -name "*.apk" -type f | while read apk; do
+          echo "Aligning $apk..."
+          mv "$apk" "$apk.unaligned"
+          zipalign -v -p 4 "$apk.unaligned" "$apk"
+          rm "$apk.unaligned"
+
+          apksigner sign \
+            --ks keystore.jks \
+            --ks-pass pass:"$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass pass:"$ANDROID_KEY_PASSWORD" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            "$apk"
+          echo "Signed: $apk"
+        done
+        
+        rm -f keystore.jks
+      else
+        echo "Warning: Signing credentials not provided. Skipping signing step."
+      fi
+  artifacts:
+    paths:
+{% for variant in build_variants %}
+      - "app/build/outputs/apk/*/{{ variant.lower() }}/*.apk"
+{% endfor %}
+      - "app/**/*.apk"
+      - "**/outputs/apk/**/*.apk"
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ANDROID_SIGN_RELEASE == "true"
+{% endif %}
+

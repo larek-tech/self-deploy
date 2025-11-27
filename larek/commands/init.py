@@ -98,6 +98,13 @@ def docker(repo_path_raw: str):
     composer = Composer()
     for srv in config.services:
         dockerfile = composer.get_dockerfile(srv)
+        if dockerfile is None:
+            rprint(
+                f"[yellow]Skipping Dockerfile generation for {srv.name} (Android project)[/yellow]"
+            )
+            rprint("\n")
+            continue
+
         dockerfile_path = f".larek/{srv.name}.Dockerfile"
         with open(dockerfile_path, "w", encoding="utf-8") as f:
             f.write(dockerfile)

@@ -441,6 +441,99 @@ class KotlinPipelineBuilder(PipelineBuilder):
         return self.render_template("kotlin.gitlab-ci.yml.j2", context)
 
 
+class AndroidPipelineBuilder(PipelineBuilder):
+    """Pipeline builder for Android projects."""
+
+    def generate(
+        self, service: Service, deployment: Optional[Deployment] = None
+    ) -> str:
+        """Generate GitLab CI pipeline for Android project."""
+        if not service.android:
+            raise ValueError("Service is not an Android project")
+
+        android = service.android
+        package_manager = service.dependencies.packet_manager
+        has_lint = len(service.linters) > 0
+        has_test = bool(service.tests) and "echo" not in service.tests.lower()
+
+        build_variants = []
+        if android.product_flavors:
+            for flavor in android.product_flavors:
+                # Capitalize first letter of flavor
+                flavor_cap = flavor.capitalize() if flavor else ""
+                for build_type in android.build_types:
+                    build_type_cap = build_type.capitalize() if build_type else ""
+                    build_variants.append(f"{flavor_cap}{build_type_cap}")
+        else:
+            # No flavors, just build types
+            for build_type in android.build_types:
+                build_variants.append(build_type.capitalize())
+
+        # Build commands for each variant
+        build_commands = []
+        for variant in build_variants:
+            if package_manager == "gradle":
+                # Use gradlew if available, otherwise gradle
+                # Check if gradlew exists in service path
+                gradlew_path = service.path / "gradlew"
+                gradle_cmd = "./gradlew" if gradlew_path.exists() else "gradle"
+                build_commands.append(f"{gradle_cmd} assemble{variant}")
+
+        # Determine lint command
+        if package_manager == "gradle":
+            # Check if gradlew exists in service path
+            gradlew_path = service.path / "gradlew"
+            gradle_cmd = "./gradlew" if gradlew_path.exists() else "gradle"
+            lint_cmd = f"{gradle_cmd} lint"
+            test_cmd = service.tests or f"{gradle_cmd} test"
+        else:
+            lint_cmd = "mvn checkstyle:check"
+            test_cmd = service.tests or "mvn test"
+
+        stages = self.get_stages(service, deployment)
+
+        context = {
+            "service": service,
+            "java_version": service.lang.version or "17",
+            "android": android,
+            "stages": stages,
+            "package_manager": package_manager,
+            "lint_command": lint_cmd,
+            "test_command": test_cmd,
+            "build_commands": build_commands,
+            "build_variants": build_variants,
+            "has_lint": has_lint,
+            "has_test": has_test,
+            "has_signing": android.has_signing_config,
+            **self.get_docker_context(service),
+        }
+        return self.render_template("android.gitlab-ci.yml.j2", context)
+
+    def get_stages(
+        self, service: Optional[Service] = None, deployment: Optional[Deployment] = None
+    ) -> List[str]:
+        """Return list of pipeline stages for Android projects."""
+        stages: List[str] = []
+
+        if service and service.linters:
+            stages.append("lint")
+
+        if service and service.tests and "echo" not in service.tests.lower():
+            stages.append("test")
+
+        stages.append("build")
+
+        if service and service.android and service.android.has_signing_config:
+            stages.append("sign")
+
+        extra = self.extra_stages(service, deployment)
+        for st in extra:
+            if st not in stages:
+                stages.append(st)
+
+        return stages
+
+
 class PipelineComposer:
     """Composer for generating GitLab CI pipelines with Docker build and push support."""
 
@@ -454,6 +547,7 @@ class PipelineComposer:
             "typescript": NodePipelineBuilder(template_dir),
             "java": JavaPipelineBuilder(template_dir),
             "kotlin": KotlinPipelineBuilder(template_dir),
+            "android": AndroidPipelineBuilder(template_dir),
         }
 
     def get_pipeline(self, service: Service) -> str:
