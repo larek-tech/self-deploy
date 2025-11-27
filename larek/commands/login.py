@@ -29,7 +29,7 @@ def login(
 ):
     """
     Авторизация в GitLab с помощью Personal Access Token.
-    Токен будет сохранен локально для использования в других командах.
+    Токен будет сохранён локально для использования в других командах.
     """
     console.print("[bold blue]Авторизация в Larek CLI[/bold blue]")
 
@@ -43,22 +43,22 @@ def login(
         console.print(
             f"Вы можете создать его здесь: {url}/-/user_settings/personal_access_tokens"
         )
-        console.print("Необходимые права: api, read_repository, write_repository")
+        console.print("Требуемые права: api, read_repository, write_repository")
         token = Prompt.ask("Access Token", password=True)
 
     if not token:
-        console.print("[red]Токен не может быть пустым.[/red]")
+        console.print("[red]❗️ Токен не может быть пустым.[/red]")
         raise typer.Exit(code=1)
 
     # Проверка токена
-    console.print(f"[yellow]Подключение к {url}...[/yellow]")
+    console.print(f"[yellow]🔎 Подключение к {url}...[/yellow]")
 
     try:
         gl = gitlab.Gitlab(url=url, private_token=token)
         gl.auth()
-        console.print(f"[green]Успешная авторизация")
+        console.print(f"[green]✅ Успешная авторизация[/green]")
     except Exception as e:
-        console.print(f"[red]Ошибка авторизации: {e}[/red]")
+        console.print(f"[red]❌ Ошибка авторизации: {e}[/red]")
         console.print(
             "[yellow]Проверьте правильность токена и доступность GitLab.[/yellow]"
         )
@@ -69,16 +69,16 @@ def login(
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(token, encoding="utf-8")
         token_path.chmod(0o600)
-        console.print(f"[green]Токен успешно сохранен в {token_path}[/green]")
+        console.print(f"[green]🔒 Токен успешно сохранён в {token_path}[/green]")
     except Exception as e:
-        console.print(f"[red]Ошибка при сохранении токена: {e}[/red]")
+        console.print(f"[red]❌ Ошибка при сохранении токена: {e}[/red]")
         raise typer.Exit(code=1)
 
     url_path = Path(os.getenv("GITLAB_URL_FILE", URL_FILE))
     try:
         url_path.parent.mkdir(parents=True, exist_ok=True)
         url_path.write_text(url, encoding="utf-8")
-        console.print(f"[green]URL успешно сохранен в {url_path}[/green]")
+        console.print(f"[green]✅ URL успешно сохранён в {url_path}[/green]")
     except Exception as e:
-        console.print(f"[red]Ошибка при сохранении URL: {e}[/red]")
+        console.print(f"[red]❌ Ошибка при сохранении URL: {e}[/red]")
         raise typer.Exit(code=1)

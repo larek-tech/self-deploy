@@ -14,14 +14,14 @@ from pydantic_yaml import parse_yaml_raw_as
 def docker(
     build_file: str = typer.Argument(
         "./.larek/build.yaml",
-        help="путь до build.yaml",
+        help="Путь до файла build.yaml",
     ),
 ):
-    """Команда для отладки этапа генерации Dockerfile"""
+    """Команда для отладки генерации Dockerfile"""
 
     if not os.path.exists(build_file):
-        rprint(f"[red]Error: File not found: {build_file}[/red]")
-        rprint(f"[yellow]Current working directory: {os.getcwd()}[/yellow]")
+        rprint(f"[red]Ошибка: файл не найден: {build_file}[/red]")
+        rprint(f"[yellow]Текущая директория: {os.getcwd()}[/yellow]")
         raise typer.Exit(code=1)
 
     with open(build_file, "r", encoding="utf-8") as f:
@@ -35,10 +35,10 @@ def docker(
         if dockerfile is None:
 
             rprint(
-                f"[yellow]Skipping Dockerfile generation for {srv.name} (Android project)[/yellow]"
+                f"[yellow]Пропускаем генерацию Dockerfile для {srv.name} (Android-проект)[/yellow]"
             )
             rprint(
-                "[cyan]Note:[/cyan] Use the pipeline builder to generate GitLab CI for APK builds."
+                "[cyan]Примечание:[/cyan] Используйте pipeline builder для генерации GitLab CI для APK-сборок."
             )
             rprint("\n")
             continue
@@ -46,14 +46,14 @@ def docker(
         with open(f"{srv.name}.Dockerfile", "w", encoding="utf-8") as f:
             f.write(dockerfile)
 
-        rprint("docker file generated for " + srv.name)
+        rprint(f"Dockerfile сгенерирован: {srv.name}.Dockerfile")
 
-        # Instructions for building and running the Docker image
-        rprint("\n[cyan]Build and Run Instructions:[/cyan]")
+        # Инструкции по сборке и запуску
+        rprint("\n[cyan]Инструкции по сборке и запуску:[/cyan]")
         rprint(
-            f"[green]1. Build the Docker image:[/green] docker build -t {srv.name}:latest -f {srv.name}.Dockerfile ."
+            f"[green]1. Собрать образ:[/green] docker build -t {srv.name}:latest -f {srv.name}.Dockerfile ."
         )
         rprint(
-            f"[green]2. Run the Docker container:[/green] docker run --rm -it {srv.name}:latest"
+            f"[green]2. Запустить контейнер:[/green] docker run --rm -it {srv.name}:latest"
         )
         rprint("\n")

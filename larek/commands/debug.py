@@ -51,13 +51,13 @@ def debug(
     ),
 ):
     """
-    Инициализация нового проекта из репозитория.
+    Инициализация нового проекта из локального репозитория для отладки анализа.
 
     Пример использования:
-        larek init ./repo/backend
+        larek debug ./repo/backend
     """
     console.print(
-        f"[green]Инициализация проекта из репозитория:[/green] {repo_path_raw}"
+        f"[green]▶️ Инициализация проекта из репозитория (debug):[/green] {repo_path_raw}"
     )
     console.print(f"[blue]Ветка:[/blue] {branch}")
 

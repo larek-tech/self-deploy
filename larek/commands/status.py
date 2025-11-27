@@ -28,16 +28,16 @@ def status():
                 response = requests.get(service["url"], timeout=5)
                 if response.status_code == 200:
                     table.add_row(service["name"], "🟢 Работает", service["url"])
-                    console.print(f"[green]✔[/green] {service['name']} is ready")
+                    console.print(f"[green]✔[/green] Сервис {service['name']} доступен")
                 else:
                     table.add_row(service["name"], "🔴 Недоступен", service["url"])
                     console.print(
-                        f"[red]✖[/red] {service['name']} returned status code {response.status_code}"
+                        f"[red]✖[/red] Сервис {service['name']} вернул код {response.status_code}"
                     )
             else:
                 table.add_row(service["name"], "🔴 Не настроен", "-")
-                console.print(f"[yellow]⚠[/yellow] {service['name']} is not configured")
+                console.print(f"[yellow]⚠[/yellow] Сервис {service['name']} не настроен")
         except requests.RequestException as e:
             table.add_row(service["name"], "🔴 Недоступен", service["url"] or "-")
-            console.print(f"[red]✖[/red] {service['name']} is not reachable: {e}")
+            console.print(f"[red]✖[/red] Сервис {service['name']} недоступен: {e}")
     console.print(table)

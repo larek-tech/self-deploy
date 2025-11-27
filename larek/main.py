@@ -7,7 +7,7 @@ from larek.commands import init, status, debug, clear, docker, gitlab, clone, lo
 
 app = typer.Typer(
     name="larek",
-    help="CLI инструмент для управления инфраструктурой self-deploy",
+    help="Удобный CLI для управления self-deploy-инфраструктурой ⚙️",
     add_completion=False,
 )
 
@@ -27,7 +27,9 @@ app.command()(gitlab.gitlab)
 @app.callback()
 def main():
     """
-    Larek CLI - инструмент для управления инфраструктурой self-deploy от larek.tech
+    Larek CLI — инструмент для управления self-deploy (larek.tech).
+
+    Используйте команды для инициализации проектов, отладки и работы с GitLab.
     """
     pass
 

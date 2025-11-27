@@ -11,13 +11,13 @@ console = Console()
 def clone(
     repo_path: str = typer.Argument(
         ...,
-        help="Git-репозиторий",
+        help="URL Git-репозитория (ssh/https)",
     ),
     branch: str = typer.Option(
         "main",
         "--branch",
         "-b",
-        help="Ветка для анализа",
+        help="Ветка для клонирования/анализа",
     ),
 ):
     """
@@ -26,7 +26,7 @@ def clone(
     Пример использования:
         larek clone ssh://<repository> --branch main
     """
-    console.print(f"[green]Клонируем репозиторий:[/green] {repo_path}")
+    console.print(f"[green]▶️ Клонируем репозиторий:[/green] {repo_path}")
     console.print(f"[blue]Ветка:[/blue] {branch}")
 
     subprocess.run(
@@ -34,6 +34,4 @@ def clone(
         check=True,
     )
 
-    console.print(
-        f"[green]Репозиторий склонирован.[/green]"
-    )
+    console.print(f"[green]✨ Репозиторий успешно склонирован.[/green]")

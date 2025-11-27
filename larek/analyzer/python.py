@@ -4,6 +4,9 @@ from larek.analyzer import BaseAnalyzer
 from larek import models
 import re
 from typing import Tuple
+from rich.console import Console
+
+console = Console()
 
 
 class PythonAnalyze(BaseAnalyzer):
@@ -368,7 +371,7 @@ class PythonAnalyze(BaseAnalyzer):
                                     libraries.append(lib)
                                     seen.add(lib.name)
                 except Exception as e:
-                    print(f"Error reading {file}: {e}")
+                    console.print(f"[red]Ошибка при чтении {file}: {e}[/red]")
                     continue
 
             # Parse pyproject.toml for dependencies
@@ -419,7 +422,7 @@ class PythonAnalyze(BaseAnalyzer):
                     pass
 
         except Exception as e:
-            print(f"Error in get_libs: {e}")
+            console.print(f"[red]Ошибка при анализе зависимостей: {e}[/red]")
 
         return libraries
 
