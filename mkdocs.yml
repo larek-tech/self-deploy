@@ -1,0 +1,34 @@
+site_name: "self-deploy — документация"
+site_description: "Документация проекта self-deploy (larek) — формат build.yaml, структура проекта, init-процедуры и развёртывание CI/CD"
+site_author: "larek"
+repo_name: "self-deploy"
+nav:
+  - Home: index.md
+  - Формат .larek/build.yaml: build-format.md
+  - Структура проекта: project-structure.md
+  - Инициализация (init): init-steps.md
+  - CI/CD (Ansible): ansible-ci-cd.md
+  - Pydantic -> Markdown: pydantic-generator.md
+  - Автосгенерированная схема: auto_repo_schema.md
+theme:
+  name: "material"
+  language: "ru"
+  features:
+    - navigation.instant
+    - navigation.sections
+    - toc.integrate
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true
+plugins:
+  - search
+  - macros
+  - awesome-pages
+extra_css: []
+extra_javascript: []
+
+# Примечание: для полной функциональности установите mkdocs-material и плагины
+
+

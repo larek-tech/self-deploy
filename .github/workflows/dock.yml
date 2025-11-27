@@ -1,0 +1,41 @@
+name: build-and-publish-docs
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install deps & build docs
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements-docs.txt
+          python scripts/generate_repo_schema_docs.py || true
+          mkdocs build --clean
+
+      - name: Log into GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        run: |
+          docker build -f Dockerfile.docs -t ghcr.io/larek-tech/self-deploy-docs:${{ github.sha }} .
+          docker tag ghcr.io/larek-tech/self-deploy-docs:${{ github.sha }} ghcr.io/larek-tech/self-deploy-docs:latest
+          docker push ghcr.io/larek-tech/self-deploy-docs:${{ github.sha }}
+          docker push ghcr.io/larek-tech/self-deploy-docs:latest

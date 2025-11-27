@@ -1,0 +1,14 @@
+.git
+venv
+results
+data
+sample
+.gitlab-ansible-deployment
+.gitignore
+*.pyc
+__pycache__
+node_modules
+.env
+build
+dist
+

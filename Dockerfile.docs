@@ -1,0 +1,55 @@
+# Multi-stage Dockerfile для сборки и запуска статической документации MkDocs
+# 1) Стадия сборки: устанавливаем Python deps, генерируем автодок и собираем сайт
+# 2) Стадия рантайма: используем nginx для отдачи статических файлов
+
+############################
+# Stage 1: build site
+############################
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Установим только минимальные системные зависимости
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Скопируем файлы зависимостей и установим Python пакеты для документации
+COPY requirements-docs.txt ./requirements-docs.txt
+RUN pip install --no-cache-dir -r requirements-docs.txt
+
+# Копируем только то, что нужно для генерации и сборки сайта
+# (это вместе с .dockerignore значительно уменьшит размер передаваемого контекста)
+COPY mkdocs.yml ./mkdocs.yml
+COPY docs/ ./docs/
+COPY scripts/ ./scripts/
+COPY larek/ ./larek/
+
+# Генерируем автодок (Pydantic -> Markdown) и собираем статический сайт
+# Скрипт должен корректно импортировать larek.models.repo; убедитесь, что зависимости проекта установлены
+RUN set -eux; \
+    if [ -f scripts/generate_repo_schema_docs.py ]; then python scripts/generate_repo_schema_docs.py || true; fi; \
+    mkdocs build --clean
+
+############################
+# Stage 2: runtime (nginx)
+############################
+FROM nginx:alpine
+
+# Порт, на котором будет доступна документация
+EXPOSE 80
+
+# Удаляем дефолтный контент и копируем статическую сборку из builder
+RUN rm -rf /usr/share/nginx/html/*
+COPY --from=builder /app/site /usr/share/nginx/html
+
+# Поставим простой healthcheck (опционально)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- --timeout=2 http://localhost/ || exit 1
+
+# Запускаем nginx в foreground
+CMD ["nginx", "-g", "daemon off;"]
