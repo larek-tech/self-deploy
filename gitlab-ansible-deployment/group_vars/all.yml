@@ -1,13 +1,31 @@
 ---
 # Global GitLab Configuration
 gitlab_edition: "gitlab-ce"  # or "gitlab-ee"
+# Public hostname for your GitLab instance (recommended to override per-host)
+# Example: gitlab_external_url: "https://gitlab.example.com"
 #gitlab_domain: "gitlab.yourdomain.com"  # Change this!
-gitlab_use_ssl: false  # Simple HTTP setup
-gitlab_backup_retention_days: 7
-#gitlab_ssl_self_signed: true
+
+# Secure defaults for VPS hosting
+gitlab_use_ssl: true            # enable HTTPS (preferred)
+gitlab_letsencrypt_enable: true # enable Let's Encrypt certificate provisioning
+# Contact email for Let's Encrypt registration (set to a real admin email)
+gitlab_letsencrypt_contact: 'ops@example.com'
+
+# Registry defaults (can be overridden per host)
+gitlab_registry_enabled: true
+# Optionally set a separate registry hostname, e.g. registry.example.com
+# gitlab_registry_host: "registry.example.com"
 
 # Resource limits (adjust based on VM specs)
 gitlab_puma_workers: 2
 gitlab_sidekiq_concurrency: 25
 gitlab_postgresql_shared_buffers: "256MB"
 gitlab_postgresql_effective_cache_size: "1GB"
+
+# TLS certificate paths (use if not using Let's Encrypt). Put certs on the host and reference paths here.
+# gitlab_ssl_certificate_path: "/etc/gitlab/ssl/gitlab.example.com.crt"
+# gitlab_ssl_certificate_key_path: "/etc/gitlab/ssl/gitlab.example.com.key"
+
+# Registry TLS (optional, defaults to main certs if not provided)
+# gitlab_registry_ssl_certificate_path: "/etc/gitlab/ssl/registry.example.com.crt"
+# gitlab_registry_ssl_certificate_key_path: "/etc/gitlab/ssl/registry.example.com.key"

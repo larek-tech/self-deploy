@@ -1,61 +1,113 @@
-#!/bin/bash
-# GitLab Configuration Fix Script
-# This script fixes the "unsupported config value grafana" error
+# Jinja2 template for /etc/gitlab/gitlab.rb
+# This template renders a minimal, secure GitLab Omnibus configuration.
+# Recommended workflow for a VPS:
+# - Set `gitlab_external_url` in host_vars to a public FQDN (https://gitlab.example.com)
+# - Enable `gitlab_use_ssl: true` and either enable Let's Encrypt (`gitlab_letsencrypt_enable: true`)
+#   or provide `gitlab_ssl_certificate_path` and `gitlab_ssl_certificate_key_path` pointing to cert files on the host.
+# - Optionally set `gitlab_registry_enabled: true` and `gitlab_registry_external_url` or `gitlab_registry_host`.
+# - For scalable storage, configure object storage (S3/MinIO) below.
 
-echo "=== GitLab Configuration Fix ==="
-
-# Backup current configuration
-echo "1. Backing up current gitlab.rb..."
-sudo cp /etc/gitlab/gitlab.rb /etc/gitlab/gitlab.rb.backup.$(date +%Y%m%d_%H%M%S)
-
-# Create a minimal working gitlab.rb
-echo "2. Creating minimal GitLab configuration..."
-sudo tee /etc/gitlab/gitlab.rb > /dev/null << 'EOF'
-# GitLab minimal configuration for HTTP access
-# Generated to fix configuration errors
-
-external_url 'http://10.10.146.68'
+# External URL (must be full URL: http:// or https://)
+external_url '{{ gitlab_external_url | default("http://127.0.0.1") }}'
 
 # Basic Rails configuration
-gitlab_rails['time_zone'] = 'UTC'
-gitlab_rails['backup_keep_time'] = 604800
-gitlab_rails['backup_archive_permissions'] = 0644
+gitlab_rails['time_zone'] = '{{ gitlab_time_zone | default("UTC") }}'
+gitlab_rails['backup_keep_time'] = {{ gitlab_backup_retention_seconds | default(604800) }}
 
-# Email configuration
-gitlab_rails['smtp_enable'] = false
-gitlab_rails['gitlab_email_from'] = 'gitlab@10.10.146.68'
+# Optional: instance environment variables exposed to GitLab processes
+# Provide these via host_vars or Ansible Vault (recommended for secrets).
+{% if nexus_user is defined or nexus_password is defined or nexus_host is defined %}
+# Expose Nexus credentials and host to GitLab runtime environment
+gitlab_rails['env'] = {
+{% if nexus_user is defined %}  'NEXUS_USER' => '{{ nexus_user }}',{% endif %}
+{% if nexus_password is defined %}  'NEXUS_PASSWORD' => '{{ nexus_password }}',{% endif %}
+{% if nexus_host is defined %}  'NEXUS_HOST' => '{{ nexus_host }}',{% endif %}
+}
+{% endif %}
 
-# Nginx - HTTP only
+# Email configuration (adjust in group_vars/host_vars)
+gitlab_rails['smtp_enable'] = {{ 'true' if (gitlab_smtp_enable | default(false)) else 'false' }}
+{% if gitlab_email_from is defined %}gitlab_rails['gitlab_email_from'] = '{{ gitlab_email_from }}'{% else %}gitlab_rails['gitlab_email_from'] = 'gitlab@{{ (gitlab_external_url | default('127.0.0.1')).split('://')[-1] }}'{% endif %}
+
+# NGINX and TLS settings
 nginx['enable'] = true
+{% if gitlab_use_ssl or gitlab_letsencrypt_enable %}
+# Enable HTTPS and redirect HTTP -> HTTPS
+nginx['listen_port'] = 80
+nginx['listen_https'] = true
+nginx['redirect_http_to_https'] = true
+{% else %}
 nginx['listen_port'] = 80
 nginx['listen_https'] = false
 nginx['redirect_http_to_https'] = false
+{% endif %}
 
-# PostgreSQL
+# Let's Encrypt support (recommended for VPS with public domain)
+{% if gitlab_letsencrypt_enable %}
+letsencrypt['enable'] = true
+letsencrypt['contact_emails'] = ['{{ gitlab_letsencrypt_contact | default('admin@' + (gitlab_external_url | default('example.com')).split('://')[-1]) }}']
+letsencrypt['auto_renew'] = true
+# Optional: letsencrypt['nginx_proxy'] = false
+{% endif %}
+
+# If not using Let's Encrypt, you can provide certificate files and set paths below.
+{% if gitlab_ssl_certificate_path and gitlab_ssl_certificate_key_path %}
+nginx['ssl_certificate'] = '{{ gitlab_ssl_certificate_path }}'
+nginx['ssl_certificate_key'] = '{{ gitlab_ssl_certificate_key_path }}'
+{% endif %}
+
+# Puma/Sidekiq/Postgres/Redis tuning
+puma['worker_processes'] = {{ gitlab_puma_workers | default(2) }}
+sidekiq['max_concurrency'] = {{ gitlab_sidekiq_concurrency | default(25) }}
 postgresql['enable'] = true
-postgresql['shared_buffers'] = "256MB"
+postgresql['shared_buffers'] = '{{ gitlab_postgresql_shared_buffers | default("256MB") }}'
 
-# Redis
 redis['enable'] = true
 
-# Puma (application server)
-puma['worker_processes'] = 2
+# Container Registry configuration
+{% if gitlab_registry_enabled | default(true) %}
+# Registry host: either provide gitlab_registry_external_url or a host (gitlab_registry_host)
+{% if gitlab_registry_external_url %}
+registry_external_url '{{ gitlab_registry_external_url }}'
+{% else %}
+{% set _host = gitlab_registry_host if gitlab_registry_host is defined else ((gitlab_external_url | default('http://127.0.0.1')).split('://')[-1] | replace('gitlab.', 'registry.')) %}
+registry_external_url 'https://{{ _host }}'
+{% endif %}
 
-# Sidekiq (background jobs)
-sidekiq['max_concurrency'] = 25
+gitlab_rails['registry_enabled'] = true
+registry['enable'] = true
 
-# Disable features not available in CE or causing issues
-# Note: grafana and alertmanager are EE-only features
+# Registry TLS: prefer explicit registry certs, otherwise reuse main cert paths if provided
+{% if gitlab_registry_ssl_certificate_path and gitlab_registry_ssl_certificate_key_path %}
+registry_nginx['ssl_certificate'] = '{{ gitlab_registry_ssl_certificate_path }}'
+registry_nginx['ssl_certificate_key'] = '{{ gitlab_registry_ssl_certificate_key_path }}'
+{% elif gitlab_ssl_certificate_path and gitlab_ssl_certificate_key_path %}
+registry_nginx['ssl_certificate'] = '{{ gitlab_ssl_certificate_path }}'
+registry_nginx['ssl_certificate_key'] = '{{ gitlab_ssl_certificate_key_path }}'
+{% endif %}
 
-EOF
+# Optional: fine tune registry settings here (storage, log level, auth tokens)
+{% endif %}
 
-echo "3. Setting correct permissions..."
-sudo chmod 600 /etc/gitlab/gitlab.rb
-sudo chown root:root /etc/gitlab/gitlab.rb
+# Security & operations hardening suggestions (edit as needed)
+# Disable non-essential features by default; enable only when required
+# grafana/dashboard and other EE-only features are left out intentionally
 
-echo "4. Attempting GitLab reconfiguration..."
-sudo gitlab-ctl reconfigure
+# Object storage (S3/MinIO) - example block (comment or enable and fill secrets in vault/vars)
+# If you need durable storage for the registry and large artifacts, configure object storage.
+# Example (uncomment and set values in group_vars/host_vars or Ansible Vault):
+# gitlab_rails['object_store'] = {
+#   'enabled' => true,
+#   'connection' => {
+#     'provider' => 'AWS',
+#     'region' => 'us-east-1',
+#     'aws_access_key_id' => 'YOUR_KEY',
+#     'aws_secret_access_key' => 'YOUR_SECRET',
+#     'endpoint' => 'https://s3.amazonaws.com',
+#     'path_style' => false
+#   },
+#   'remote_directory' => 'gitlab-uploads'
+# }
 
-echo "=== Configuration Fix Complete ==="
-echo "If successful, GitLab should be accessible at: http://10.10.146.68"
-echo "Initial root password: sudo cat /etc/gitlab/initial_root_password"
+# Keep file permissions strict
+# Note: the template engine will write this to /etc/gitlab/gitlab.rb when applied by Ansible

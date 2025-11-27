@@ -1,6 +1,18 @@
 ---
 # Host-specific overrides
+# Replace the example IP with your public FQDN for production VPS, e.g. https://gitlab.example.com
+# If you use a private IP for testing, keep as-is.
+# Example for production:
+# gitlab_external_url: "https://gitlab.example.com"
+
 gitlab_external_url: "http://10.10.146.68"
+
+# Nexus integration instance variables
+# NOTE: store sensitive values like passwords in Ansible Vault in production.
+nexus_user: "admin"
+nexus_password: "admin123"
+# Set this to your Nexus host URL, e.g. https://nexus.example.com or http://10.0.0.5:8081
+nexus_host: "http://nexus.local:8081"
 
 # VM-specific resource adjustments
 ansible_python_interpreter: /usr/bin/python3
