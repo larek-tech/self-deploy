@@ -279,6 +279,105 @@ chmod +x setup.sh
 larek init <ссылка на репозиторий>
 ```
 
+## Использование Docker образа
+
+Ниже — краткая инструкция по использованию Docker-образа с утилитой `larek`. Примеры команд рассчитаны на zsh/bash.
+
+1) Сборка локального образа (опционально, если вы хотите собирать сами):
+
+```bash
+# Собрать образ из Dockerfile.larek
+docker build -f Dockerfile.larek -t larek-cli:local .
+```
+
+2) Запуск образа — простой пример (показывает help):
+
+```bash
+docker run --rm larek-cli:local --help
+# или, если берёте образ из GHCR:
+# docker run --rm ghcr.io/larek-tech/larek:latest --help
+```
+
+3) Запуск команды `larek` с монтированием текущей директории как рабочей области:
+
+```bash
+# Монтируем текущую директорию в /workdir внутри контейнера
+docker run --rm -it \
+  -v "$(pwd)":/workdir -w /workdir \
+  larek-cli:local \
+  larek init https://github.com/user/repo.git
+```
+
+4) Доступ к приватным репозиториям — два варианта (рекомендуется первый):
+
+- A) Forward SSH agent (рекомендуемый, безопаснее, не копирует ключи в контейнер):
+
+```bash
+# Перед использованием убедитесь, что ssh-agent запущен и ключ добавлен (ssh-add)
+# Пробрасываем сокет агента в контейнер
+docker run --rm -it \
+  -v "$(pwd)":/workdir -w /workdir \
+  -v "$SSH_AUTH_SOCK":/ssh-agent \
+  -e SSH_AUTH_SOCK=/ssh-agent \
+  larek-cli:local \
+  larek init git@github.com:user/repo.git
+```
+
+- B) Монтирование приватного ключа (менее безопасно, простейший, если нет агентa):
+
+```bash
+docker run --rm -it \
+  -v "$(pwd)":/workdir -w /workdir \
+  -v ~/.ssh:/root/.ssh:ro \
+  larek-cli:local \
+  larek init git@github.com:user/repo.git
+```
+
+5) Сохранение файлов с корректными правами: запуск контейнера от вашего UID
+
+```bash
+docker run --rm -it \
+  -u "$(id -u):$(id -g)" \
+  -v "$(pwd)":/workdir -w /workdir \
+  larek-cli:local \
+  larek docker
+```
+
+6) Использование переменных окружения / автоматизация логина
+
+- Если нужно передать токен для входа в GitLab, можно передать его через переменную окружения и выполнить внутри контейнера команду `larek login`:
+
+```bash
+export GITLAB_TOKEN="<your_token>"
+docker run --rm -it \
+  -v "$(pwd)":/workdir -w /workdir \
+  -e GITLAB_TOKEN="$GITLAB_TOKEN" \
+  larek-cli:local \
+  larek login --url https://gitlab.example --token "$GITLAB_TOKEN"
+```
+
+(Если ваш проект использует другую переменную окружения для токена — используйте её; также вы можете вызвать `larek login` интерактивно внутри контейнера.)
+
+7) Работа с образом в GitHub Container Registry (GHCR)
+
+```bash
+# Присвоить тег и отправить образ в GHCR
+# 1) залогиньтесь в ghcr
+echo "$CR_PAT" | docker login ghcr.io -u "$GITHUB_USER" --password-stdin
+# 2) тег и push
+docker tag larek-cli:local ghcr.io/larek-tech/larek:latest
+docker push ghcr.io/larek-tech/larek:latest
+```
+
+8) Быстрые рекомендации и отладка
+
+- Запустите контейнер с `-it` чтобы работать интерактивно.
+- Если создаваемые файлы внутри контейнера появляются с root-владельцем, используйте `-u $(id -u):$(id -g)`.
+- Для безопасного доступа к приватным репозиториям используйте SSH agent forwarding (вариант 4A).
+- Если контейнеру нужен доступ к Docker (например, для запуска docker внутри контейнера), используйте docker-in-docker / монтирование `-v /var/run/docker.sock:/var/run/docker.sock` с осторожностью.
+
+---
+
 ## Развёртывание на удалённом сервере (Ansible)
 
 Для развёртывания инфраструктуры на удалённом сервере используется Ansible с Docker Compose.
